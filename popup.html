@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>RevPilot</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+  <script src="auth.js"></script>
+  <script src="sheets-api.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo-container">
+      <img src="images/logo.png" alt="RevPilot" class="logo">
+      <h1>RevPilot</h1>
+    </div>
+    <button id="settings-button" class="icon-button" title="Settings">
+      <span>⚙️</span>
+    </button>
+  </header>
+  
+  <div class="content">
+    <!-- Create New Account Plan -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Create Account Plan</h2>
+      </div>
+      
+      <div id="company-input" class="form-group">
+        <label for="company-name" class="form-label">Company Name</label>
+        <div class="input-wrapper">
+          <input type="text" id="company-name" class="form-control" placeholder="Enter company name">
+          <span class="input-icon">🏢</span>
+        </div>
+        <button id="generate-plan" class="primary-button">
+          <span class="button-icon">+</span> Generate Plan
+        </button>
+      </div>
+      
+      <div id="loading" class="hidden">
+        <div class="loader"></div>
+        <p id="loading-message">Generating your account plan...</p>
+      </div>
+      
+      <div id="success-message" class="hidden">
+        <p id="success-text">Account plan successfully created!</p>
+        <div class="button-group">
+          <button id="view-plan" class="secondary-button">View Plan</button>
+          <button id="create-another" class="text-button">Create Another</button>
+        </div>
+      </div>
+    
+    <!-- Previous Account Plans -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">Your Account Plans</h2>
+        <span id="plans-count" class="badge">0</span>
+      </div>
+      
+      <div class="search-bar">
+        <input type="text" id="search-plans" class="form-control" placeholder="Search plans...">
+        <span class="search-icon">🔍</span>
+      </div>
+      
+      <div id="account-plans-list" class="plans-list">
+        <!-- This will be populated dynamically -->
+        <div class="empty-state" id="empty-plans-state">
+          <p class="empty-state-message">No account plans yet. Create your first one above!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Toast notification -->
+  <div id="toast" class="toast">
+    <div class="toast-icon">✓</div>
+    <div class="toast-message">Action completed successfully!</div>
+    <button class="toast-close">&times;</button>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
