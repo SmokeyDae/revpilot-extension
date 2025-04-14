@@ -1,62 +1,76 @@
 {
   "manifest_version": 3,
-  "name": "RevPilot",
-  "version": "0.1",
-  "description": "AI-powered account planning for sales professionals",
-  "icons": {
-    "16": "images/icon-16.png",
-    "32": "images/icon-32.png",
-    "48": "images/icon-48.png",
-    "128": "images/icon-128.png"
-  },
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "images/icon-16.png",
-      "32": "images/icon-32.png",
-      "48": "images/icon-48.png",
-      "128": "images/icon-128.png"
-    }
-  },
+  "name": "RevPilot AI - Account Plan Builder",
+  "version": "1.1.0",
+  "description": "AI-powered account planning tool that creates structured planning templates in Google Sheets",
   "permissions": [
     "activeTab",
     "storage",
-    "scripting",
-    "identity",
-    "tabs"
+    "identity"
   ],
   "host_permissions": [
-    "https://docs.google.com/spreadsheets/*",
-    "https://www.linkedin.com/*",
     "https://sheets.googleapis.com/*",
-    "https://www.googleapis.com/oauth2/*",
-    "https://www.googleapis.com/drive/*"
+    "https://www.googleapis.com/*"
   ],
-  "content_scripts": [
-    {
-      "matches": ["https://docs.google.com/spreadsheets/*", "https://www.linkedin.com/*"],
-      "js": ["content.js"],
-      "run_at": "document_start"
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
     }
-  ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
   },
   "background": {
     "service_worker": "background.js"
   },
   "oauth2": {
-    "client_id": "1072774287424-5k2ijvcp39r8j3vtq0pu0rbvq2h5nvvg.apps.googleusercontent.com",
+    "client_id": "1061622184127-hdi43ajq36o0lp3mu22krvj5qt4nmhls.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive"
     ]
   },
-  "key": "memfmmdkgecblaoifpdcfacmbcbkkkan",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com;"
+  },
+  
   "web_accessible_resources": [
     {
       "resources": ["images/*"],
-      "matches": ["https://docs.google.com/*", "https://www.linkedin.com/*"]
+      "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "author": "RevPilot AI",
+  "homepage_url": "https://www.revpilot.ai",
+  "commands": {
+    "create-tab": {
+      "suggested_key": {
+        "default": "Alt+C"
+      },
+      "description": "Open Create tab"
+    },
+    "manage-tab": {
+      "suggested_key": {
+        "default": "Alt+M"
+      },
+      "description": "Open Manage tab"
+    },
+    "new-plan": {
+      "suggested_key": {
+        "default": "Alt+N"
+      },
+      "description": "Create a new plan"
+    },
+    "toggle-dark-mode": {
+      "suggested_key": {
+        "default": "Alt+D"
+      },
+      "description": "Toggle dark mode"
+    }
+  }
 }

@@ -1,82 +1,785 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>RevPilot</title>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
-  <script src="auth.js"></script>
-  <script src="sheets-api.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RevPilot AI - Account Plan Builder</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-  <header class="header">
-    <div class="logo-container">
-      <img src="images/logo.png" alt="RevPilot" class="logo">
-      <h1>RevPilot</h1>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <div id="notification-area" aria-live="polite" class="visually-hidden"></div>
+  <div id="app-container" class="container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-container">
+        <button id="dark-mode-toggle" class="icon-button" aria-label="Toggle dark mode">
+          <i class="fas fa-moon"></i>
+        </button>
+        <img src="images/icon48.png" alt="RevPilot Logo" class="logo-img">
+        <div class="brand-info">
+          <h1>RevPilot AI</h1>
+          <p>Account Plan Builder</p>
+        </div>
+      </div>
+      <div class="header-controls">
+        <button id="profile-button" class="icon-button" aria-label="Profile and settings">
+          <i class="fas fa-user-circle"></i>
+        </button>
+      </div>
+    </header>
+    <!-- Main Content -->
+    <main id="main-content" class="main-content">
+      <!-- Login Section -->
+      <section id="login-section" class="section hidden" aria-hidden="true">
+        <div class="login-container">
+          <h2>Welcome to RevPilot AI</h2>
+          <p>Sign in with your Google account to start creating account plans with AI assistance.</p>
+          <button id="login-button" class="button primary">
+            <i class="fas fa-sign-in-alt" aria-hidden="true"></i> Sign in with Google
+          </button>
+        </div>        
+      </section>
+
+      <!-- Main Section (Tabs) -->
+      <section id="main-section" class="section hidden" aria-hidden="true">
+        <div class="tab-container">
+          <div class="tabs" role="tablist">
+            <button id="tab-create" class="tab-button active" data-tab="create" role="tab" aria-selected="true" aria-controls="create-tab">
+              <i class="fas fa-file-alt" aria-hidden="true"></i> Create
+            </button>
+            <button id="tab-manage" class="tab-button" data-tab="manage" role="tab" aria-selected="false" aria-controls="manage-tab">
+              <i class="fas fa-folder-open" aria-hidden="true"></i> Manage
+            </button>
+          </div>
+          <!-- Create Tab Content -->
+          <div id="create-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-create" tabindex="0">
+            <h2 class="compact-heading">Create Account Plan</h2>
+            <form id="create-plan-form" class="card compact-form">
+              <div class="form-group">
+                <label for="account-name">Account Name</label>
+                <input type="text" id="account-name" name="account-name" placeholder="Enter account name" required aria-required="true">
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="button primary">
+                  <i class="fas fa-file-circle-plus"></i> Create Plan
+                </button>
+              </div>
+              <div class="secondary-actions">
+                <button id="plan-includes-btn" type="button" class="plan-includes-button">
+                  <i class="fas fa-list-check"></i> What's included?
+                </button>
+              </div>
+            </form>
+          </div>
+          <!-- Manage Tab Content -->
+          <div id="manage-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-manage" tabindex="-1" aria-hidden="true">
+            <h2>Manage Account Plans</h2>
+            <div class="search-container">
+              <div class="search-box">
+                <i class="fas fa-search search-icon" aria-hidden="true"></i>
+                <input type="text" id="search-plans" placeholder="Search plans..." aria-label="Search plans">
+                <button type="button" id="clear-search" class="clear-search-btn hide-button" aria-label="Clear search">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div id="recent-plans">
+              <!-- Plans will be loaded here -->
+              <div class="skeleton-container" aria-hidden="true">
+                <div class="skeleton-item"></div>
+                <div class="skeleton-item"></div>
+                <div class="skeleton-item"></div>
+              </div>
+              <p class="visually-hidden" aria-live="polite">Loading plans...</p>
+            </div>
+            <div class="refresh-actions text-center" style="margin-top: 20px;">
+              <button id="refresh-plans" class="button secondary">
+                <i class="fas fa-sync-alt" aria-hidden="true"></i> Refresh Plans
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <!-- Success Section -->
+      <section id="success-section" class="section hidden" aria-hidden="true">
+        <div class="success-icon">
+          <i class="fas fa-check" aria-hidden="true"></i>
+        </div>
+        <h2>Success!</h2>
+        <p id="success-message">Your account plan has been created successfully!</p>
+        <div class="form-actions">
+          <a id="open-sheet-link" href="#" class="button primary" target="_blank" rel="noopener noreferrer">
+            <i class="fas fa-external-link-alt" aria-hidden="true"></i> Open in Google Sheets
+          </a>
+          <button id="create-another-button" class="button secondary">
+            <i class="fas fa-plus" aria-hidden="true"></i> Create Another
+          </button>
+        </div>
+      </section>
+
+      <!-- Error Section -->
+      <section id="error-section" class="section hidden" aria-hidden="true">
+        <div class="error-icon">
+          <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+        </div>
+        <h2>Oops! Something went wrong.</h2>
+        <p id="error-message">There was an error creating your plan. Please try again.</p>
+        <div class="form-actions">
+          <button id="try-again-button" class="button primary">
+            <i class="fas fa-redo" aria-hidden="true"></i> Try Again
+          </button>
+          <button id="back-button" class="button secondary">
+            <i class="fas fa-arrow-left" aria-hidden="true"></i> Back
+          </button>
+        </div>
+      </section>
+    </main>
+    <!-- Footer -->
+    <footer>
+      <div class="footer-content">
+        <span>RevPilot AI</span>
+        <span id="version-number">1.1.0</span>
+        <span>|</span>
+        <a id="help-link" href="#" rel="noopener noreferrer">Help</a>
+      </div>
+    </footer>
+    <!-- "What's Included" Modal (Initially Hidden) -->
+    <div class="popup-overlay" id="plan-includes-overlay">
+      <div class="popup-container">
+        <div class="popup-header">
+          <h3><i class="fas fa-list-check"></i> What's Included</h3>
+          <button class="popup-close" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="popup-content">
+          <div class="section-heading">
+            <h4>Account Plan Features</h4>
+            <div class="heading-underline"></div>
+          </div>
+          <div class="intro-banner">
+            <i class="fas fa-info-circle"></i>
+            <span>AI-powered tools designed to optimize your client relationship management</span>
+          </div>
+
+          <!-- Key sections -->
+          <div class="section-heading">
+            <h4 class="subsection-title">Plan Structure</h4>
+          </div>
+          <ul class="feature-list">
+            <li>
+              <i class="fas fa-user-circle"></i>
+              <div>
+                <strong>Account Profile</strong>
+                <p>Basic account information, industry, revenue, and key identifiers</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-chart-line"></i>
+              <div>
+                <strong>Executive Summary</strong>
+                <p>Overview of client situation, pain points, and value proposition</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-bullseye"></i>
+              <div>
+                <strong>Strategic Overview</strong>
+                <p>Business challenges, goals, solutions, and success criteria</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-address-book"></i>
+              <div>
+                <strong>Key Contacts</strong>
+                <p>Stakeholder information with roles and contact details</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-handshake"></i>
+              <div>
+                <strong>Customer Success</strong>
+                <p>Track outcomes, milestones, and relationship progress</p>
+              </div>
+            </li>
+          </ul>
+          <!-- AI Features -->
+          <div class="section-heading">
+            <h4 class="subsection-title">AI & Automation Features</h4>
+          </div>
+          <ul class="feature-list">
+            <li>
+              <i class="fas fa-robot"></i>
+              <div>
+                <strong>AI Auto-Fill</strong>
+                <p>Automatically generate and fill account information using AI assistance</p>
+              </div>
+            </li>
+            <li>
+              <i class="fab fa-linkedin"></i>
+              <div>
+                <strong>LinkedIn Integration</strong>
+                <p>Pull prospect profiles directly from LinkedIn into your account plans</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-magic"></i>
+              <div>
+                <strong>Smart Templates</strong>
+                <p>Pre-configured templates with AI-optimized sections and formatting</p>
+              </div>
+            </li>
+          </ul>
+
+          <!-- Utility Features -->
+          <div class="section-heading">
+            <h4 class="subsection-title">Utility Features</h4>
+          </div>
+          <ul class="feature-list">
+            <li>
+              <i class="fas fa-search"></i>
+              <div>
+                <strong>Search & Organization</strong>
+                <p>Quickly find and manage all your account plans in one place</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-moon"></i>
+              <div>
+                <strong>Theme Customization</strong>
+                <p>Switch between light and dark mode to match your preferences</p>
+              </div>
+            </li>
+            <li>
+              <i class="fas fa-keyboard"></i>
+              <div>
+                <strong>Keyboard Shortcuts</strong>
+                <p>Boost productivity with convenient keyboard commands</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>      
     </div>
-    <button id="settings-button" class="icon-button" title="Settings">
-      <span>⚙️</span>
-    </button>
-  </header>
+    <!-- Initial loading state -->
+    <div id="app-loader" class="loader-container">
+      <div class="loader"></div>
+      <p>Loading RevPilot AI...</p>
+    </div>
+  </div>
+
+  <!-- Toast container (for notifications) -->
+  <div id="toast-container"></div>
+  <!-- Help Modal Container -->
+<div id="help-modal-overlay" class="popup-overlay">
+  <div class="popup-container help-container">
+    <div class="popup-header">
+      <h3><i class="fas fa-question-circle"></i> Help Center</h3>
+      <button class="popup-close" aria-label="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
   
-  <div class="content">
-    <!-- Create New Account Plan -->
-    <div class="card">
-      <div class="card-header">
-        <h2 class="card-title">Create Account Plan</h2>
+    <!-- Help Navigation Tabs -->
+    <div class="help-tabs">
+      <button class="help-tab-button active" data-tab="faq">FAQ</button>
+      <button class="help-tab-button" data-tab="shortcuts">Shortcuts</button>
+      <button class="help-tab-button" data-tab="privacy">Privacy</button>
+    </div>
+  
+    <div class="help-content">
+      <!-- FAQ Tab Content - Now active by default -->
+      <div class="help-tab-content active" id="faq-tab">
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            How do I create a new account plan?
+          </div>
+          <div class="faq-answer">
+            <p>Click on the "Create" tab, enter your account name, and click "Create Plan". A new Google Sheet will be created with your account plan template. The plan will open automatically after creation, or you can find it later in the "Manage" tab.</p>
+          </div>  
+        </div>
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            Can I modify an existing plan?
+          </div>
+          <div class="faq-answer">
+            <p>Yes! Go to the "Manage" tab and click "Open" on the plan you wish to edit. This will open the Google Sheet where you can make changes to any section including account profile, executive summary, and strategic overview.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            How do I delete a plan?
+          </div>
+          <div class="faq-answer">
+            <p>In the "Manage" tab, find the plan you want to remove and click the "Delete" button. You'll be asked to confirm before the plan is deleted. Note that this permanently removes the sheet from your Google Drive.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            Where are my plans stored?
+          </div>
+          <div class="faq-answer">
+            <p>All your account plans are stored in a master Google Sheet in your Google Drive. Each plan is a separate tab within that spreadsheet. The spreadsheet is only accessible to you and anyone you explicitly share it with.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            How do I search for a specific plan?
+          </div>
+          <div class="faq-answer">
+            <p>In the "Manage" tab, use the search box at the top to filter your plans by name. Simply start typing and results will appear instantly. Click the "X" icon to clear your search and show all plans again.</p>
+          </div>
+        </div>
+        
+        <!-- New FAQs -->
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            Can I use keyboard shortcuts?
+          </div>
+          <div class="faq-answer">
+            <p>Yes! RevPilot AI offers several keyboard shortcuts to improve your productivity:</p>
+            <ul>
+              <li><strong>Alt+C</strong>: Switch to Create tab</li>
+              <li><strong>Alt+M</strong>: Switch to Manage tab</li>
+              <li><strong>Alt+N</strong>: Focus on new plan form</li>
+              <li><strong>Alt+D</strong>: Toggle dark mode</li>
+              <li><strong>Alt+H</strong>: Open this help popup</li>
+            </ul>
+            <p>You can see all shortcuts in the "Shortcuts" tab of this help center.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            What's included in each account plan?
+          </div>
+          <div class="faq-answer">
+            <p>Each account plan contains several structured sections:</p>
+            <ul>
+              <li><strong>Account Profile</strong>: Basic account information, industry details, revenue, etc.</li>
+              <li><strong>Executive Summary</strong>: Current situation, key pain points, value proposition, and success metrics</li>
+              <li><strong>Strategic Overview</strong>: Business challenges, goals, solutions, and success criteria</li>
+              <li><strong>Key Contacts</strong>: Stakeholder information with roles and contact details</li>
+            </ul>
+            <p>You can view the full list of included features by clicking the "What's included?" button on the Create tab.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            How do I switch between dark and light mode?
+          </div>
+          <div class="faq-answer">
+            <p>Click the moon icon <i class="fas fa-moon"></i> in the top-left corner of the extension to toggle between dark and light mode. You can also use the keyboard shortcut <kbd>Alt</kbd> + <kbd>D</kbd>. Your preference will be saved for future sessions.</p>
+          </div>
+        </div>
+        
+        <div class="faq-item">
+          <div class="faq-question">
+            <i class="fas fa-chevron-right"></i>
+            How can I refresh my plans list?
+          </div>
+          <div class="faq-answer">
+            <p>If you've made changes to your plans outside the extension or need to refresh the list for any reason, you can click the "Refresh Plans" button at the bottom of the Manage tab. This will fetch the latest data from your Google Drive.</p>
+          </div>
+        </div>
       </div>
       
-      <div id="company-input" class="form-group">
-        <label for="company-name" class="form-label">Company Name</label>
-        <div class="input-wrapper">
-          <input type="text" id="company-name" class="form-control" placeholder="Enter company name">
-          <span class="input-icon">🏢</span>
+      <!-- Keyboard Shortcuts Tab Content -->
+      <div class="help-tab-content" id="shortcuts-tab">
+        <div class="shortcut-item">
+          <div>Switch to Create tab</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>C</kbd></div>
         </div>
-        <button id="generate-plan" class="primary-button">
-          <span class="button-icon">+</span> Generate Plan
+        <div class="shortcut-item">
+          <div>Switch to Manage tab</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>M</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <div>Focus new plan form</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>N</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <div>Toggle dark mode</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>D</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <div>Open help popup</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>H</kbd></div>
+        </div>
+        <div class="shortcut-item">
+          <div>Refresh plans list</div>
+          <div class="shortcut-keys"><kbd>Alt</kbd> + <kbd>R</kbd></div>
+        </div>
+      </div>
+      
+      <!-- Privacy Tab Content -->
+      <div class="help-tab-content" id="privacy-tab">
+        <h4>Privacy Policy</h4>
+        <div class="privacy-content">
+          <p>At RevPilot AI, we take your privacy seriously. Here's what you should know about how our extension handles your data:</p>
+          
+          <div class="privacy-section">
+            <h5>Data Collection</h5>
+            <p>This extension only accesses and stores data necessary for its functionality:</p>
+            <ul>
+              <li>Account plan information you create</li>
+              <li>Google authentication tokens (for accessing Google Sheets)</li>
+              <li>User preferences (like dark mode setting)</li>
+            </ul>
+          </div>
+          
+          <div class="privacy-section">
+            <h5>Data Storage</h5>
+            <p>Your data is stored in:</p>
+            <ul>
+              <li>Chrome's local storage (on your device only)</li>
+              <li>Your Google Drive (account plans as spreadsheets)</li>
+            </ul>
+            <p>We never store your data on our servers.</p>
+          </div>
+          
+          <div class="privacy-section">
+            <h5>Permissions</h5>
+            <p>This extension requires the following permissions:</p>
+            <ul>
+              <li><strong>Google Sheets & Drive access</strong>: To create and manage your account plans</li>
+              <li><strong>Storage</strong>: To save your preferences and recent plans</li>
+            </ul>
+          </div>
+          
+          <div class="privacy-section">
+            <h5>Third-Party Services</h5>
+            <p>This extension integrates with Google services to provide functionality. Please refer to Google's privacy policy for information on how they handle your data.</p>
+          </div>
+          
+          <div class="privacy-section">
+            <h5>Data Removal</h5>
+            <p>If you uninstall the extension:</p>
+            <ul>
+              <li>Local storage data will be removed from your device</li>
+              <li>Spreadsheets created in your Google Drive will remain unless you delete them manually</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="help-footer">
+      <div class="version-info">
+        RevPilot AI <span id="help-version-number">1.1.0</span>
+      </div>
+      <a href="https://www.revpilot.ai/contact" target="_blank" class="contact-support">
+        <i class="fas fa-envelope"></i> Contact Support
+      </a>
+    </div>
+  </div>
+</div>
+<div id="profile-popup" class="popup-overlay">
+  <div class="popup-container profile-popup-container">
+    <div class="popup-header">
+      <h3><i class="fas fa-user-circle"></i> Account Settings</h3>
+      <button class="popup-close" aria-label="Close">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  
+  <div class="popup-tabs">
+    <button class="popup-tab-button active" data-tab="account">
+      <i class="fas fa-user"></i> Account
+    </button>
+    <button class="popup-tab-button" data-tab="integrations">
+      <i class="fas fa-plug"></i> Integrations
+    </button>
+    <button class="popup-tab-button" data-tab="upgrade">
+      <i class="fas fa-crown"></i> Upgrade
+    </button>
+  </div>
+  
+  <div class="popup-content">
+    <!-- Account Tab - UPDATED WITH GOOGLE SIGN-IN -->
+    <div class="popup-tab-content active" id="account-tab">
+      <!-- Signed Out State -->
+      <div class="auth-state" id="signed-out-state">
+        <div class="account-welcome">
+          <h4>Welcome to RevPilot AI</h4>
+        </div>
+        <div class="google-signin-container">
+          <button id="google-signin-button" class="google-signin-btn">
+            <img src="images/google-logo.svg" alt="Google" class="google-icon">
+            <span>Sign in with Google</span>
+          </button>
+        </div>
+        <div class="company-field">
+          <label for="company-name-input">Company Name</label>
+          <div class="company-input-container">
+            <input type="text" id="company-name-input" placeholder="Enter your company name">
+            <button id="save-company-btn" class="save-company-button">
+              <i class="fas fa-check"></i>
+            </button>
+          </div>
+        </div>
+        <div class="remember-me-container">
+          <label class="remember-checkbox-label">
+            <input type="checkbox" id="remember-me-checkbox">
+            <span class="checkbox-text">Remember me on this device</span>
+          </label>
+        </div>
+      </div>
+      
+      <!-- Signed In State (initially hidden) -->
+      <div class="auth-state hidden" id="signed-in-state">
+        <div class="user-info">
+          <div class="user-avatar">
+            <i class="fas fa-user-circle"></i>
+          </div>
+          <div class="user-details">
+            <h4 id="user-name">User Name</h4>
+            <p id="user-email">user@example.com</p>
+            <span class="plan-badge" id="user-plan">Free Plan</span>
+          </div>
+        </div>
+        <div class="company-field">
+          <label for="company-name-input">Company Name</label>
+          <div class="company-input-container">
+            <input type="text" id="company-name-input" placeholder="Enter your company name">
+            <button id="save-company-btn" class="save-company-button">
+              <i class="fas fa-check"></i>
+            </button>
+          </div>
+        </div>
+        <div class="account-actions">
+          <button id="logout-btn" class="button outline">
+            <i class="fas fa-sign-out-alt"></i> Sign Out
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Integrations Tab Content -->
+    <div class="popup-tab-content" id="integrations-tab">
+      <h4>Connect Your Accounts</h4>
+      <div class="integration-item">
+        <div class="integration-logo">
+          <i class="fas fa-search"></i>
+        </div>
+        <div class="integration-info">
+          <h5>ZoomInfo</h5>
+          <p>Import contact data automatically</p>
+        </div>
+        <button class="button secondary connect-button" data-service="zoominfo">
+          Connect
+        </button>
+      </div>
+      <div class="integration-item">
+        <div class="integration-logo">
+          <i class="fas fa-chart-line"></i>
+        </div>
+        <div class="integration-info">
+          <h5>CRM Integration</h5>
+          <p>Salesforce, HubSpot, or Monday.com</p>
+        </div>
+        <button class="button secondary connect-button" data-service="crm">
+          Connect
         </button>
       </div>
       
-      <div id="loading" class="hidden">
-        <div class="loader"></div>
-        <p id="loading-message">Generating your account plan...</p>
-      </div>
-      
-      <div id="success-message" class="hidden">
-        <p id="success-text">Account plan successfully created!</p>
-        <div class="button-group">
-          <button id="view-plan" class="secondary-button">View Plan</button>
-          <button id="create-another" class="text-button">Create Another</button>
+      <div class="integration-item">
+        <div class="integration-logo">
+          <i class="fas fa-robot"></i>
         </div>
-      </div>
-    
-    <!-- Previous Account Plans -->
-    <div class="card">
-      <div class="card-header">
-        <h2 class="card-title">Your Account Plans</h2>
-        <span id="plans-count" class="badge">0</span>
-      </div>
-      
-      <div class="search-bar">
-        <input type="text" id="search-plans" class="form-control" placeholder="Search plans...">
-        <span class="search-icon">🔍</span>
+        <div class="integration-info">
+          <h5>OpenAI</h5>
+          <p>Generate content with your API key</p>
+        </div>
+        <button class="button secondary connect-button" data-service="openai">
+          Connect
+        </button>
       </div>
       
-      <div id="account-plans-list" class="plans-list">
-        <!-- This will be populated dynamically -->
-        <div class="empty-state" id="empty-plans-state">
-          <p class="empty-state-message">No account plans yet. Create your first one above!</p>
+      <div class="integration-item">
+        <div class="integration-logo">
+          <i class="fab fa-linkedin"></i>
+        </div>
+        <div class="integration-info">
+          <h5>LinkedIn Account</h5>
+          <p>Access contact and company insights</p>
+        </div>
+        <button class="button secondary connect-button" data-service="linkedin">
+          Connect
+        </button>
+      </div>
+      
+      <div class="integration-item">
+        <div class="integration-logo">
+          <i class="far fa-calendar-alt"></i>
+        </div>
+        <div class="integration-info">
+          <h5>Google Calendar</h5>
+          <p>Sync meetings and plan reviews</p>
+        </div>
+        <button class="button secondary connect-button" data-service="google-calendar">
+          Connect
+        </button>
+      </div>
+    </div>
+    <!-- Upgrade Tab -->
+    <div class="popup-tab-content" id="upgrade-tab">
+      <div class="upgrade-container">
+        <div class="upgrade-header">
+          <h4>Upgrade to Pro</h4>
+          <p>Unlock premium features and boost productivity</p>
+        </div>
+        
+        <div class="plans-container">
+          <!-- Free Plan View -->
+          <div class="plan-slide active" id="free-plan-view">
+            <div class="plan current">
+              <div class="plan-badge current-badge">Current</div>
+              <h5>Free Plan</h5>
+              <div class="plan-price">
+                <span class="price">$0</span>
+                <span class="period">/Month</span>
+              </div>
+              
+              <div class="plan-limits">
+                <div class="limit-item">
+                  <div class="limit-label">Account Plans</div>
+                  <div class="limit-bar">
+                    <div class="limit-fill" style="width: 50%;"></div>
+                  </div>
+                  <div class="limit-text">3/5 Plans</div>
+                </div>
+              </div>
+              
+              <ul class="plan-features">
+                <li><i class="fas fa-check"></i> Basic account plans</li>
+                <li><i class="fas fa-check"></i> Up to 5 plans</li>
+                <li><i class="fas fa-check"></i> Standard templates</li>
+                <li class="feature-limited"><i class="fas fa-exclamation-circle"></i> Limited AI suggestions</li>
+                <li class="feature-unavailable"><i class="fas fa-times"></i> Advanced AI features</li>
+              </ul>
+              
+              <button id="show-pro-plan" class="button primary show-pro-button">
+                <span>View Pro Plan</span>
+                <div class="arrow-container">
+                  <i class="fas fa-arrow-right"></i>
+                </div>
+              </button>
+            </div>
+          </div>
+          
+          <!-- Pro Plan View -->
+          <div class="plan-slide" id="pro-plan-view">
+            <div class="view-header">
+              <button id="back-to-free" class="back-button">
+                <i class="fas fa-arrow-left"></i> Back
+              </button>
+            </div>
+            
+            <div class="plan pro">
+              <div class="plan-badge pro-badge">Recommended</div>
+              <h5>Pro Plan</h5>
+              <div class="plan-price">
+                <span class="price">$6.99</span>
+                <span class="period">/Month</span>
+              </div>
+              
+              <ul class="plan-features">
+                <li><i class="fas fa-check"></i> Enhanced account plans</li>
+                <li><i class="fas fa-check"></i> Unlimited plans</li>
+                <li><i class="fas fa-check"></i> Premium templates</li>
+                <li><i class="fas fa-check"></i> <span class="feature-new">Advanced AI features</span></li>
+                <li><i class="fas fa-check"></i> <span class="feature-new">Priority support</span></li>
+                <li><i class="fas fa-check"></i> <span class="feature-new">Export & sharing options</span></li>
+              </ul>
+              
+              <div class="benefit-item">
+                <i class="fas fa-bolt"></i>
+                <span>Work 3x faster with AI automation</span>
+              </div>
+              
+              <button id="upgrade-button" class="button primary upgrade-now-button">
+                <i class="fas fa-crown"></i> Upgrade Now
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+    
+<!-- Enhanced Plan Item Template (for JS reference) -->
+<div class="plan-item-template" style="display: none;">
+  <div class="plan-item">
+    <div class="plan-info">
+      <div class="plan-name">{PLAN_NAME}</div>
+      <div class="plan-date">
+        <i class="fas fa-clock"></i> {PLAN_DATE}
+      </div>
+    </div>
+    <div class="plan-actions">
+      <button class="button primary open-button" data-plan-url="{PLAN_URL}">
+        <i class="fas fa-external-link-alt"></i> Open
+      </button>
+      <button class="button delete-button" data-plan-id="{PLAN_ID}" data-account-name="{PLAN_NAME}" data-sheet-gid="{SHEET_GID}">
+        <i class="fas fa-trash-alt"></i> Delete
+      </button>
+    </div>
   </div>
-  
-  <!-- Toast notification -->
-  <div id="toast" class="toast">
-    <div class="toast-icon">✓</div>
-    <div class="toast-message">Action completed successfully!</div>
-    <button class="toast-close">&times;</button>
+</div>
+
+<!-- Enhanced Toast Notification Template (for JS reference) -->
+<div id="toast-template" style="display: none;">
+  <div id="toast" class="toast {TYPE}">
+    <div class="toast-content">
+      <i class="fas fa-{ICON} toast-icon"></i>
+      <span>{MESSAGE}</span>
+    </div>
+    <button class="toast-close" aria-label="Dismiss notification">
+      <i class="fas fa-times"></i>
+    </button>
   </div>
-  
-  <script src="popup.js"></script>
+</div>
+
+<!-- Enhanced Empty State Template (for JS reference) -->
+<div class="empty-state-template" style="display: none;">
+  <div class="empty-state">
+    <div class="empty-state-icon">
+      <i class="fas fa-clipboard-list"></i>
+    </div>
+    <h3>No plans yet</h3>
+    <p>Create your first account plan to get started.</p>
+    <button class="button primary create-first-plan-btn">
+      <i class="fas fa-plus"></i> Create Plan
+    </button>
+  </div>
+</div>
+<!-- Load modules in the correct order -->
+<script src="js/config.js"></script>
+<script src="js/errorHandler.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/sheets.js"></script>
+<script src="js/planManager.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/popup.js"></script>
+<script src="js/animations.js"></script>
 </body>
 </html>
