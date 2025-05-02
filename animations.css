@@ -1,0 +1,591 @@
+/* animations.css - Animation Styles for RevPilot AI
+ * Contains keyframe definitions, transitions, and animation utilities
+ */
+ /* ====================== KEYFRAME DEFINITIONS ====================== */
+/* Consolidated fade and translate animations */
+/* Tab switching animations */
+@keyframes fadeInSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeOutSlideUp {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Toast notifications */
+@keyframes toast-in {
+  0% { 
+    opacity: 0;
+    transform: translate(-50%, 20px);
+    filter: blur(3px);
+  }
+  100% { 
+    opacity: 1;
+    transform: translate(-50%, 0);
+    filter: blur(0);
+  }
+}
+
+@keyframes toast-out {
+  0% { 
+    opacity: 1;
+    transform: translate(-50%, 0);
+    filter: blur(0);
+  }
+  100% { 
+    opacity: 0;
+    transform: translate(-50%, 20px);
+    filter: blur(3px);
+  }
+}
+
+/* Scale in animation for success/error icons */
+@keyframes scale-in {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Enhanced shimmer animation for skeleton loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Spinner rotation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Button pulse animation */
+@keyframes pulse {
+  0% { opacity: 0.7; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 0.7; transform: scale(0.9); }
+}
+
+/* More subtle button pulse */
+@keyframes pulse-button {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* Shake animation for validation errors */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+/* Slide animations for upgrade views */
+@keyframes slideInWithRotation {
+  0% {
+    opacity: 0;
+    transform: translateX(30px) rotate(1deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) rotate(0);
+  }
+}
+
+@keyframes fadeInRight {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Animation for feature appearance */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* ====================== ANIMATED ELEMENTS ====================== */
+/* Page transition prevention */
+.preload * {
+  transition: none !important;
+}
+
+/* Animated sections */
+.section {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Tab content animation */
+.tab-content.active {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Toast animations */
+#toast {
+  animation: toast-in 0.3s ease forwards;
+}
+
+#toast.hiding {
+  animation: toast-out 0.3s forwards;
+}
+
+/* Success and error icons */
+.success-icon,
+.error-icon {
+  animation: scale-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.success-icon i, 
+.error-icon i {
+  opacity: 0;
+  transform: scale(0.5);
+  animation: scale-in 0.5s 0.2s forwards;
+}
+
+
+/* Spring bounce animation for popups */
+@keyframes springIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Skeleton loading animation */
+.skeleton-item {
+  background: linear-gradient(90deg, 
+    var(--very-light-gray) 0%, 
+    var(--light-gray) 50%, 
+    var(--very-light-gray) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Delete dialog animation */
+.delete-dialog {
+  animation: scale-in 0.3s forwards;
+}
+
+/* Popup tab content animation */
+.popup-tab-content.active {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Button with loading state */
+.button[aria-busy="true"] {
+  animation: pulse 1.5s infinite;
+}
+
+.button[aria-busy="true"] i {
+  animation: spin 1s infinite linear;
+}
+/* ====================== STAGGERED ANIMATIONS ====================== */
+/* Plan items staggered entrance */
+.plan-item {
+  opacity: 0;
+  transform: translateY(15px);
+  animation: fadeIn 0.4s forwards;
+}
+
+.plan-item:nth-child(1) { animation-delay: 0.05s; }
+.plan-item:nth-child(2) { animation-delay: 0.1s; }
+.plan-item:nth-child(3) { animation-delay: 0.15s; }
+.plan-item:nth-child(4) { animation-delay: 0.2s; }
+.plan-item:nth-child(5) { animation-delay: 0.25s; }
+
+/* Plan features staggered entrance in upgrade view */
+.plan-features li {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: fadeIn 0.3s forwards;
+}
+
+.plan-features li:nth-child(1) { animation-delay: 0.1s; }
+.plan-features li:nth-child(2) { animation-delay: 0.15s; }
+.plan-features li:nth-child(3) { animation-delay: 0.2s; }
+.plan-features li:nth-child(4) { animation-delay: 0.25s; }
+.plan-features li:nth-child(5) { animation-delay: 0.3s; }
+.plan-features li:nth-child(6) { animation-delay: 0.35s; }
+
+/* Staggered animation class for reuse */
+.staggered-animation li {
+  opacity: 0;
+  animation: fadeInUp 0.3s forwards;
+}
+
+.staggered-animation li:nth-child(1) { animation-delay: 0.05s; }
+.staggered-animation li:nth-child(2) { animation-delay: 0.1s; }
+.staggered-animation li:nth-child(3) { animation-delay: 0.15s; }
+.staggered-animation li:nth-child(4) { animation-delay: 0.2s; }
+.staggered-animation li:nth-child(5) { animation-delay: 0.25s; }
+.staggered-animation li:nth-child(6) { animation-delay: 0.3s; }
+/* ====================== TRANSITION EFFECTS ====================== */
+/* Consolidated transitions for common elements */
+.animatable,
+.section,
+.tab-button:after,
+.button,
+.plan-item,
+.progress-fill,
+.popup-overlay,
+.popup-container,
+.toast-close,
+#dark-mode-toggle i,
+.popup-close,
+.faq-answer {
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Button transitions with specific behaviors */
+.button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.button:hover {
+  transform: translateY(-2px);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+/* Plan item transitions */
+.plan-item:hover {
+  transform: translateY(-3px);
+}
+
+/* Popup close button rotation effect */
+.popup-close:hover {
+  transform: rotate(90deg);
+}
+
+/* FAQ answer transition */
+.faq-answer {
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+/* ====================== ANIMATION UTILITIES ====================== */
+/* Hidden elements (no animation) */
+.hidden {
+  display: none !important;
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+}
+
+/* Fade-out animation */
+.fade-out {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* Form submission animation */
+#create-plan-form.submitting {
+  transform: scale(0.98);
+  transition: transform 0.2s ease;
+}
+
+/* Animation for deleting plan items */
+.plan-item.deleting {
+  opacity: 0.5;
+  transform: translateX(100%);
+  transition: opacity 0.3s ease, transform 0.5s ease;
+}
+
+/* Ensure animations only play when element becomes visible */
+.upgrade-view.hidden .plan-features li,
+.upgrade-view.hidden .benefit-item {
+  animation: none;
+}
+/* ====================== ENHANCED COMPONENT ANIMATIONS ====================== */
+/* Popup Animation Enhancements */
+.popup-container, .delete-dialog, .help-container {
+  transform: scale(0.95);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), 
+              opacity 0.3s ease, 
+              background-color 0.3s ease;
+}
+
+.popup-container.show, .delete-dialog.show, .help-container.show {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* View transitions for upgrade tab */
+.upgrade-view {
+  padding: 0;
+  transition: transform 0.4s ease, opacity 0.4s ease;
+  position: relative;
+}
+
+.upgrade-view.hidden {
+  display: none;
+}
+
+.upgrade-view.slide-out {
+  transform: translateX(-30px) rotate(-1deg);
+  opacity: 0;
+}
+
+.upgrade-view.slide-in {
+  animation: slideInWithRotation 0.5s forwards;
+}
+
+/* Benefit items animation */
+.benefit-item {
+  opacity: 0;
+  transform: translateX(-10px);
+  animation: fadeInRight 0.3s forwards;
+}
+
+/* Container layout adjustments */
+.popup-overlay .popup-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.popup-tab-content {
+  overflow-y: auto !important;
+}
+
+/* Ensure proper animation inheritance */
+.plan-features, .benefit-item {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Animation for plan cards */
+.plan {
+  transition: transform 0.3s ease, box-shadow 0.3s ease, background-color 0.3s ease, border-color 0.3s ease;
+}
+
+.plan:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* Show pro plan button animation */
+.show-pro-button {
+  transition: all 0.3s ease;
+}
+
+.show-pro-button:hover .arrow-container {
+  transform: translateX(3px);
+}
+
+.show-pro-button.clicked {
+  transform: scale(0.95);
+}
+
+/* Delete dialog transitions */
+.delete-overlay.fade-out {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* FAQ accordion animations */
+.faq-question i {
+  transition: transform 0.2s ease;
+}
+
+.faq-question.open i {
+  transform: rotate(90deg);
+}
+
+.faq-answer.open {
+  max-height: 1000px;
+  padding-top: 10px;
+  padding-bottom: 15px;
+}
+
+/* Subtle shake for warning icons */
+@keyframes subtleShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+/* Red flash for delete buttons */
+@keyframes redFlash {
+  0% { background-color: var(--error-color); }
+  100% { background-color: #b71c1c; }
+}
+
+/* Enhanced toast animations */
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 30px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes toastSlideDown {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, 30px);
+  }
+}
+
+/* Scale up with bounce for empty states */
+@keyframes scaleUpBounce {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Pulse glow for empty states */
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(37, 99, 235, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+
+/* Checkmark animation for success */
+@keyframes checkmarkScale {
+  0% {
+    transform: scale(0) rotate(-45deg);
+  }
+  50% {
+    transform: scale(1.2) rotate(0deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* Error message slide in */
+@keyframes slideInFromBottom {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Animation for opening/closing */
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.faq-answer.open {
+  animation: fadeInDown 0.3s ease-out;
+}
+
+@keyframes logoPulse {
+  0% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.main-content {
+  transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  min-height: 350px; /* Base height for Create tab */
+  overflow-y: auto;
+}
+
+.main-content.manage-mode {
+  min-height: 420px; /* Expanded height for Manage tab */
+}
+
+.tab-content {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.tab-content.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes successIconAnimation {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+

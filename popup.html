@@ -89,6 +89,16 @@
                 </button>
               </div>
             </div>
+
+            <!-- Add right after the search container in manage-tab -->
+            <div class="bulk-actions">
+              <button id="delete-selected-button" class="delete-selected-button hidden" disabled>
+                <i class="fas fa-trash-alt"></i> Delete Selected
+              </button>
+            </div>
+            
+
+
             <div id="recent-plans">
               <!-- Plans will be loaded here -->
               <div class="skeleton-container" aria-hidden="true">
@@ -103,6 +113,7 @@
                 <i class="fas fa-sync-alt" aria-hidden="true"></i> Refresh Plans
               </button>
             </div>
+            
           </div>
         </div>
       </section>
@@ -144,7 +155,7 @@
     <footer>
       <div class="footer-content">
         <span>RevPilot AI</span>
-        <span id="version-number">1.1.0</span>
+        <span id="version-number">1.1.7</span>
         <span>|</span>
         <a id="help-link" href="#" rel="noopener noreferrer">Help</a>
       </div>
@@ -484,14 +495,16 @@
     
     <div class="help-footer">
       <div class="version-info">
-        RevPilot AI <span id="help-version-number">1.1.0</span>
+        RevPilot AI <span id="help-version-number">1.1.7</span>
       </div>
-      <a href="https://www.revpilot.ai/contact" target="_blank" class="contact-support">
+      <a href="https://www.revpilot.org" target="_blank" class="contact-support">
         <i class="fas fa-envelope"></i> Contact Support
       </a>
     </div>
   </div>
 </div>
+<!-- Fix for the Account Settings popup structure - replace the existing profile popup HTML -->
+
 <div id="profile-popup" class="popup-overlay">
   <div class="popup-container profile-popup-container">
     <div class="popup-header">
@@ -501,41 +514,44 @@
       </button>
     </div>
   
-  <div class="popup-tabs">
-    <button class="popup-tab-button active" data-tab="account">
-      <i class="fas fa-user"></i> Account
-    </button>
-    <button class="popup-tab-button" data-tab="integrations">
-      <i class="fas fa-plug"></i> Integrations
-    </button>
-    <button class="popup-tab-button" data-tab="upgrade">
-      <i class="fas fa-crown"></i> Upgrade
-    </button>
-  </div>
+    <div class="popup-tabs">
+      <button class="popup-tab-button active" data-tab="account">
+        <i class="fas fa-user"></i> Account
+      </button>
+      <button class="popup-tab-button" data-tab="integrations">
+        <i class="fas fa-plug"></i> Integrations
+      </button>
+      <button class="popup-tab-button" data-tab="upgrade">
+        <i class="fas fa-crown"></i> Upgrade
+      </button>
+    </div>
   
-  <div class="popup-content">
-    <!-- Account Tab - UPDATED WITH GOOGLE SIGN-IN -->
+    <!-- Account Tab -->
     <div class="popup-tab-content active" id="account-tab">
       <!-- Signed Out State -->
       <div class="auth-state" id="signed-out-state">
         <div class="account-welcome">
           <h4>Welcome to RevPilot AI</h4>
+          <p class="account-description">Sign in to access all your account plans and customize your experience.</p>
         </div>
+        
         <div class="google-signin-container">
           <button id="google-signin-button" class="google-signin-btn">
             <img src="images/google-logo.svg" alt="Google" class="google-icon">
             <span>Sign in with Google</span>
           </button>
         </div>
+        
         <div class="company-field">
           <label for="company-name-input">Company Name</label>
           <div class="company-input-container">
             <input type="text" id="company-name-input" placeholder="Enter your company name">
-            <button id="save-company-btn" class="save-company-button">
+            <button id="save-company-btn" class="save-company-button" aria-label="Save company name">
               <i class="fas fa-check"></i>
             </button>
           </div>
         </div>
+        
         <div class="remember-me-container">
           <label class="remember-checkbox-label">
             <input type="checkbox" id="remember-me-checkbox">
@@ -543,7 +559,11 @@
           </label>
         </div>
       </div>
-      
+      <div class="delete-account-container">
+        <button id="delete-account-btn" class="delete-account-button">
+          Delete My Account
+        </button>
+      </div>
       <!-- Signed In State (initially hidden) -->
       <div class="auth-state hidden" id="signed-in-state">
         <div class="user-info">
@@ -556,15 +576,17 @@
             <span class="plan-badge" id="user-plan">Free Plan</span>
           </div>
         </div>
+        
         <div class="company-field">
           <label for="company-name-input">Company Name</label>
           <div class="company-input-container">
             <input type="text" id="company-name-input" placeholder="Enter your company name">
-            <button id="save-company-btn" class="save-company-button">
+            <button id="save-company-btn" class="save-company-button" aria-label="Save company name">
               <i class="fas fa-check"></i>
             </button>
           </div>
         </div>
+        
         <div class="account-actions">
           <button id="logout-btn" class="button outline">
             <i class="fas fa-sign-out-alt"></i> Sign Out
@@ -572,6 +594,7 @@
         </div>
       </div>
     </div>
+    
     <!-- Integrations Tab Content -->
     <div class="popup-tab-content" id="integrations-tab">
       <h4>Connect Your Accounts</h4>
@@ -602,19 +625,6 @@
       
       <div class="integration-item">
         <div class="integration-logo">
-          <i class="fas fa-robot"></i>
-        </div>
-        <div class="integration-info">
-          <h5>OpenAI</h5>
-          <p>Generate content with your API key</p>
-        </div>
-        <button class="button secondary connect-button" data-service="openai">
-          Connect
-        </button>
-      </div>
-      
-      <div class="integration-item">
-        <div class="integration-logo">
           <i class="fab fa-linkedin"></i>
         </div>
         <div class="integration-info">
@@ -625,20 +635,8 @@
           Connect
         </button>
       </div>
-      
-      <div class="integration-item">
-        <div class="integration-logo">
-          <i class="far fa-calendar-alt"></i>
-        </div>
-        <div class="integration-info">
-          <h5>Google Calendar</h5>
-          <p>Sync meetings and plan reviews</p>
-        </div>
-        <button class="button secondary connect-button" data-service="google-calendar">
-          Connect
-        </button>
-      </div>
     </div>
+    
     <!-- Upgrade Tab -->
     <div class="popup-tab-content" id="upgrade-tab">
       <div class="upgrade-container">
@@ -697,17 +695,17 @@
               <div class="plan-badge pro-badge">Recommended</div>
               <h5>Pro Plan</h5>
               <div class="plan-price">
-                <span class="price">$6.99</span>
+                <span class="price">$8</span>
                 <span class="period">/Month</span>
               </div>
               
               <ul class="plan-features">
                 <li><i class="fas fa-check"></i> Enhanced account plans</li>
                 <li><i class="fas fa-check"></i> Unlimited plans</li>
-                <li><i class="fas fa-check"></i> Premium templates</li>
+                <li><i class="fas fa-check"></i> Industry templates</li>
                 <li><i class="fas fa-check"></i> <span class="feature-new">Advanced AI features</span></li>
+                <li><i class="fas fa-check"></i> <span class="feature-new">Auto Import Contacts</span></li>
                 <li><i class="fas fa-check"></i> <span class="feature-new">Priority support</span></li>
-                <li><i class="fas fa-check"></i> <span class="feature-new">Export & sharing options</span></li>
               </ul>
               
               <div class="benefit-item">
@@ -723,6 +721,8 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
     
 <!-- Enhanced Plan Item Template (for JS reference) -->
 <div class="plan-item-template" style="display: none;">

@@ -6,60 +6,68 @@
 // =============================================================================
 
 // =============================================================================
-// CONSTANTS AND GLOBAL VARIABLES
+// SECTION 1: CONSTANTS AND GLOBAL VARIABLES
 // =============================================================================
 let authToken = null;
 const SHEET_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
 const SECONDS_TO_CACHE_TOKEN = 3600; // 1 hour
 const MASTER_SHEET_TITLE = "Current Year Account Plan"; // Title for the master spreadsheet
 const STORAGE_KEY_MASTER_SHEET = 'revpilot_masterSheetId'; // Key for storing master sheet ID
-
 // =============================================================================
-// INITIALIZATION
+// SECTION 2: INITIALIZATION
 // =============================================================================
 // Setup token refresh scheduler on load
 setupTokenRefreshScheduler();
 
 /**
  * Setup a token refresh scheduler to refresh the auth token periodically
+ * Includes improved error handling and race condition prevention
  */
-function setupTokenRefreshScheduler() {
-    // Check for token expiry every 15 minutes
-    setInterval(() => {
-        chrome.storage.local.get(['revpilot_authToken', 'revpilot_authTokenExpiry'], (result) => {
-            const now = Date.now();
-            
-            // If token exists and will expire in the next 30 minutes, refresh it
-            if (result.revpilot_authToken && result.revpilot_authTokenExpiry && 
-                (result.revpilot_authTokenExpiry - now < 1800000)) {
-                console.log("Token expiring soon, refreshing...");
-                
-                // Use a semaphore approach to prevent multiple refreshes
-                chrome.storage.local.get(['revpilot_tokenRefreshInProgress'], (refreshStatus) => {
-                    if (refreshStatus.revpilot_tokenRefreshInProgress) {
-                        console.log("Token refresh already in progress, skipping");
-                        return;
-                    }
-                    
-                    // Mark refresh as in progress
-                    chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': true }, () => {
-                        getAuthToken()
-                            .then(token => {
-                                console.log("Token refreshed successfully");
-                                chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': false });
-                            })
-                            .catch(error => {
-                                console.error("Failed to refresh token:", error);
-                                chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': false });
-                            });
-                    });
-                });
-            }
-        });
-    }, 900000); // 15 minutes
+ function setupTokenRefreshScheduler() {
+  // Check for token expiry every 15 minutes
+  setInterval(() => {
+      chrome.storage.local.get(['revpilot_authToken', 'revpilot_authTokenExpiry'], (result) => {
+          const now = Date.now();
+          
+          // If token exists and will expire in the next 30 minutes, refresh it
+          if (result.revpilot_authToken && result.revpilot_authTokenExpiry && 
+              (result.revpilot_authTokenExpiry - now < 1800000)) {
+              console.log("Token expiring soon, refreshing...");
+              
+              // Use a semaphore approach to prevent multiple refreshes
+              chrome.storage.local.get(['revpilot_tokenRefreshInProgress'], (refreshStatus) => {
+                  if (refreshStatus.revpilot_tokenRefreshInProgress) {
+                      console.log("Token refresh already in progress, skipping");
+                      return;
+                  }
+                  
+                  // Mark refresh as in progress
+                  chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': true }, () => {
+                      // Set a timeout to clear the flag in case of hanging operations
+                      const timeoutId = setTimeout(() => {
+                          console.warn("Token refresh timed out, clearing refresh flag");
+                          chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': false });
+                      }, 60000); // 1 minute timeout
+                      
+                      getAuthToken()
+                          .then(token => {
+                              console.log("Token refreshed successfully");
+                              clearTimeout(timeoutId);
+                              chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': false });
+                          })
+                          .catch(error => {
+                              console.error("Failed to refresh token:", error);
+                              clearTimeout(timeoutId);
+                              chrome.storage.local.set({ 'revpilot_tokenRefreshInProgress': false });
+                          });
+                  });
+              });
+          }
+      });
+  }, 900000); // 15 minutes
 }
 // =============================================================================
-// MESSAGE HANDLERS
+// SECTION 3: MESSAGE HANDLERS
 // =============================================================================
 // Listen for messages from popup or content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -97,7 +105,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   else if (request.action === "populateSheet") {
-    populateAccountPlanTemplate(request.sheetId, request.accountData)
+    populateAccountPlanTemplate(request.sheetId, {
+      accountName: request.accountData.accountName,
+      companyName: request.companyName || 'Your Company' // Include company name
+    })
       .then(() => {
         sendResponse({ success: true });
       })
@@ -110,10 +121,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true; // Required for async sendResponse
   }
+  
 
   else if (request.action === "deleteSheet") {
     console.log("Delete sheet request received:", request.sheetId, request.accountName);
-    deleteAccountPlanSheet(request.sheetId, request.accountName)
+    deleteAccountPlanSheet(request.sheetId, request.accountName, request.sheetGid)
       .then((response) => {
         console.log("Sheet deletion successful, sending response:", response);
         sendResponse({ 
@@ -203,7 +215,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 // =============================================================================
-// AUTHENTICATION FUNCTIONS
+// SECTION 4: AUTHENTICATION FUNCTIONS
 // =============================================================================
 
 /**
@@ -278,7 +290,7 @@ async function getAuthToken() {
   });
 }
 // =============================================================================
-// NETWORK AND API UTILITY FUNCTIONS
+// SECTION 5: NETWORK AND API UTILITY FUNCTIONS
 // =============================================================================
 /**
 * Makes a fetch request with exponential backoff for rate limiting 
@@ -355,7 +367,7 @@ async function fetchWithRetry(url, options, maxRetries = 3, initialDelay = 1000)
         
         try {
           const errorData = await response.json();
-          console.error("API error response:", errorData);
+          console.error("API error response:", JSON.stringify(errorData));
           if (errorData.error && errorData.error.message) {
             errorMessage = errorData.error.message;
           }
@@ -423,11 +435,21 @@ async function fetchWithRetry(url, options, maxRetries = 3, initialDelay = 1000)
  * @param {Array} data - 2D array of data to write
  * @returns {Promise<Object>} Response data
  */
-async function updateSheetData(spreadsheetId, sheetName, data) {
+ async function updateSheetData(spreadsheetId, sheetName, data) {
   try {
     if (!authToken) {
       authToken = await getAuthToken();
     }
+    
+    // Validate inputs
+    if (!spreadsheetId || !sheetName || !Array.isArray(data)) {
+      throw new Error("Invalid parameters for updateSheetData");
+    }
+    
+    // Sanitize data to prevent API errors
+    const sanitizedData = data.map(row => 
+      Array.isArray(row) ? row.map(cell => cell !== null && cell !== undefined ? cell : '') : [String(row)]
+    );
     
     return await fetchWithRetry(
       `${SHEET_API_BASE}/${spreadsheetId}/values/${encodeURIComponent(sheetName)}?valueInputOption=USER_ENTERED`, {
@@ -439,12 +461,21 @@ async function updateSheetData(spreadsheetId, sheetName, data) {
       body: JSON.stringify({
         range: sheetName,
         majorDimension: 'ROWS',
-        values: data
+        values: sanitizedData
       })
     });
   } catch (error) {
-    console.error("Error updating sheet data:", error);
-    throw error;
+    // Use centralized error handler if available
+    if (typeof RevPilotErrorHandler !== 'undefined') {
+      RevPilotErrorHandler.handleApiError(error, 'updateSheetData');
+    } else {
+      console.error("Error updating sheet data:", error);
+    }
+    
+    // Provide context about what failed
+    const enhancedError = new Error(`Failed to update sheet "${sheetName}": ${error.message}`);
+    enhancedError.originalError = error;
+    throw enhancedError;
   }
 }
 
@@ -488,9 +519,8 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
     throw error;
   }
 }
-
 // =============================================================================
-// MASTER SPREADSHEET MANAGEMENT
+// SECTION 6: MASTER SPREADSHEET MANAGEMENT
 // =============================================================================
 /**
  * Get or create the master spreadsheet with enhanced professional design
@@ -504,8 +534,9 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
     
     // Check if we already have the master sheet ID stored
     return new Promise((resolve, reject) => {
-      chrome.storage.local.get([STORAGE_KEY_MASTER_SHEET], async (result) => {
+      chrome.storage.local.get([STORAGE_KEY_MASTER_SHEET, 'revpilot_companyName'], async (result) => {
         const masterSheetId = result[STORAGE_KEY_MASTER_SHEET];
+        const companyName = result['revpilot_companyName'] || 'Your Company'; // Default if no company name
         
         if (masterSheetId) {
           try {
@@ -544,7 +575,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             },
             body: JSON.stringify({
               properties: {
-                title: `${MASTER_SHEET_TITLE} ${year}`
+                title: `${companyName} ${year} Account Plan`
               },
               sheets: [
                 {
@@ -574,7 +605,24 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
           console.log("Successfully created master spreadsheet, now creating overview sheet");
           
           // Add enhanced overview content to the first sheet
-          await createEnhancedOverviewSheet(data.spreadsheetId);
+          try {
+            await createEnhancedOverviewSheet(data.spreadsheetId);
+            console.log("Created enhanced overview sheet successfully");
+            
+            // Also explicitly apply formatting to ensure it's done properly
+            await applyEnhancedOverviewFormatting(data.spreadsheetId);
+            console.log("Applied enhanced overview formatting successfully");
+          } catch (overviewError) {
+            console.error("Error creating or formatting overview sheet:", overviewError);
+            
+            // If enhanced formatting fails, try simplified formatting as fallback
+            try {
+              await applySimplifiedOverviewFormatting(data.spreadsheetId);
+              console.log("Applied simplified overview formatting as fallback");
+            } catch (fallbackError) {
+              console.error("Even simplified formatting failed:", fallbackError);
+            }
+          }
           
           // Save the master sheet ID for future use
           chrome.storage.local.set({ [STORAGE_KEY_MASTER_SHEET]: data.spreadsheetId }, () => {
@@ -584,6 +632,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
               console.log("Saved master spreadsheet ID to storage:", data.spreadsheetId);
             }
           });
+          
           
           console.log("New master spreadsheet created with ID:", data.spreadsheetId);
           resolve({
@@ -618,6 +667,14 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       authToken = await getAuthToken();
     }
     
+    // Get the company name from storage
+    const companyData = await new Promise(resolve => {
+      chrome.storage.local.get(['revpilot_companyName'], (result) => {
+        resolve(result);
+      });
+    });
+    
+    const companyName = companyData.revpilot_companyName || 'Your Company';
     const year = new Date().getFullYear();
     const currentDate = new Date().toLocaleDateString('en-US', {
       year: 'numeric', 
@@ -625,9 +682,9 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       day: 'numeric'
     });
     
-    // Create a professionally designed overview page
+    // Create a professionally designed overview page - UPDATED to match screenshots
     const overviewData = [
-      [`Account Plan Dashboard ${year}`], // A1: Title
+      [`${companyName} ${year} Account Plan`], // A1: Title
       [''], // A2: Empty row
       ['Created: ' + currentDate], // A3: Creation date
       ['Last Updated: ' + currentDate], // A4: Last updated
@@ -637,14 +694,15 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       [''], // A8: Empty row
       ['DASHBOARD METRICS'], // A9: Metrics header
       [''], // A10: Empty row
-      ['Total Accounts', 'High Priority', 'Medium Priority', 'Low Priority', 'Total Value'],
-      ['=COUNTA(A18:A100)', '=COUNTIF(D18:D100,"High")', '=COUNTIF(D18:D100,"Medium")', '=COUNTIF(D18:D100,"Low")', '=SUM(F18:F100)'],
+      ['Total Accounts'], // A11: Only Total Accounts metric is kept
+      ['=COUNTA(A19:A100)'], // A12: Formula updated to match new row positioning
       [''], // A13: Empty row
       [''], // A14: Empty row
       ['ACCOUNT OVERVIEW:'], // A15: Accounts header
       [''], // A16: Empty row
       // Table headers in row 17
-      ['Account Name', 'Last Activity', 'Status', 'Priority', 'Owner', 'Annual Value', 'Next Action']
+      ['Account Name', 'Last Activity', 'Status', 'SFDC Link', 'Owner', 'Annual Value', 'Next Action'],
+      ['Strategic Accounts (Top 20)'] // A18: Strategic accounts header
       // Account data will be added here dynamically
     ];
     
@@ -659,12 +717,144 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
     console.error("Error creating enhanced overview sheet:", error);
     // Make this non-critical - don't throw the error
     // but ensure basic functionality works even if formatting fails
+    
+    // Try with simplified formatting as fallback
+    try {
+      await applySimplifiedOverviewFormatting(spreadsheetId);
+      console.log("Applied simplified overview formatting as fallback");
+    } catch (fallbackError) {
+      console.error("Even simplified formatting failed:", fallbackError);
+    }
   }
 }
 
+
 // =============================================================================
-// ENHANCED SHEET FORMATTING FUNCTIONS
+// SECTION 7: ACCOUNT PLAN TEMPLATE DATA
 // =============================================================================
+
+/**
+ * Create enhanced template data for an account plan with professional structure
+ * Updated to implement the requested changes to the sheet structure
+ * 
+ * @param {string} accountName - Name of the account
+ * @param {string} companyName - Name of the user's company
+ * @returns {Array} Template data as a 2D array
+ */
+ function createEnhancedAccountPlanTemplateData(accountName, companyName = "Your Company") {
+  console.log("Creating template data with new structure for:", accountName, "Company:", companyName);
+
+  // Get current date
+  const currentDate = new Date().toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+  
+  // Create template with updated layout based on requirements
+  const templateData = [
+    // Header section - blue background with company name and creation date
+    [`${accountName} - Strategic Account Plan`],
+    [`Created: ${currentDate}`],
+    [''],
+    
+    // Account Profile section - with adjusted columns for tech stack and added assessment column
+    ['Account Name:', '', '', 'Tech Stack:', '', 'Partner Rep:'],
+    ['Industry:', '', '', 'SAP', '', ''],
+    ['Annual Revenue ($):', '', '', 'Oracle', '', ''],
+    ['Company Size:', '', '', 'AWS', '', ''],
+    ['Website:', '', '', 'Azure', '', ''],
+    ['LinkedIn:', '', '', 'SQL', '', ''],
+    ['Account Status:', 'Active', '', 'GCP', '', ''],
+    ['Account Owner:', '', '', 'Snowflake', '', ''],
+    ['HQ Location:', '', '', 'Databricks', '', ''],
+    ['Last Updated:', currentDate],
+    [''],
+    
+    // Add the new "What Does {Account Name} Do:" section here
+    [`What Does ${accountName} Do:`],
+
+    // Overview section in the blue-filled cell at A16
+    ['Overview'], // This will be moved to a blue-filled cell
+    
+    
+    // Row 17 - Simple text values instead of complex objects
+    ['Current Situation:', '', 'Business Challenges:', '', 'Closed/Lost Opportunities:', '', 'Recent Funding / Quarterly Report:'],
+    
+    // Additional overview sections
+    ['Key Pain Points:', '', `${accountName}'s Strategic Goals:`, '', 'Competitors/ Incumbent:'],
+    ['Value Proposition:', '', `Why ${companyName}:`, '', 'Research Articles/ News:'],
+    ['Success Metrics:', '', `Why ${companyName} Now:`],
+    [''],
+    [''],
+    // Contact table headers
+    [''], // Empty row where headers were
+    ['Name', 'Persona / Title', 'Notes', 'LinkedIn Profile', 'Phone Number', 'Email Address', 'Location', 'Engagement Status'],
+     // Empty row 23 (keep this empty line)
+
+
+
+    // C Level Execs row will be at row 25 (index 24) in the array
+    ['C Level Execs / Leadership'],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    [''],
+
+    // Managers/Directors row will be at row 32 (index 31) in the array
+    ['Managers/ Directors'],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    // Add 5 more rows for Managers/Directors section
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    [''],
+
+    // Individual Contributors row will be at row 38 (index 37) in the array (now shifted down)
+    ['Individual Contributors'],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    // Add 17 more rows for Individual Contributors section
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '', '']
+  ];
+  
+  return templateData;
+}
+
+
+// Update the existing function to use the new template
+function createAccountPlanTemplateData(accountName, companyName = "Your Company") {
+  return createEnhancedAccountPlanTemplateData(accountName, companyName);
+}
+// =============================================================================
+// SECTION 8: ENHANCED SHEET FORMATTING FUNCTIONS
+// =============================================================================
+// This section has been updated to change all blue fill colors to #1e40af,
+// adjust text color to white for specific cells, and implement other formatting changes
 
 /**
  * Apply enhanced formatting to the overview sheet for a professional dashboard look
@@ -683,12 +873,11 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
     
     // Find the Overview sheet ID
     let overviewSheetId = null;
-    if (sheetInfo.sheets) {
-      for (const sheet of sheetInfo.sheets) {
-        if (sheet.properties && sheet.properties.title === 'Overview') {
-          overviewSheetId = sheet.properties.sheetId;
-          break;
-        }
+    // Find the Overview sheet ID
+    for (const sheet of sheetInfo.sheets) {
+      if (sheet.properties && sheet.properties.title === 'Overview') {
+        overviewSheetId = sheet.properties.sheetId;
+        break;
       }
     }
     
@@ -823,7 +1012,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 startRowIndex: 10,
                 endRowIndex: 11,
                 startColumnIndex: 0,
-                endColumnIndex: 5
+                endColumnIndex: 1
               },
               cell: {
                 userEnteredFormat: {
@@ -850,7 +1039,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 startRowIndex: 11,
                 endRowIndex: 12,
                 startColumnIndex: 0,
-                endColumnIndex: 5
+                endColumnIndex: 1
               },
               cell: {
                 userEnteredFormat: {
@@ -928,6 +1117,39 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
+          // Format Strategic Accounts header
+          {
+            repeatCell: {
+              range: {
+                sheetId: overviewSheetId,
+                startRowIndex: 17,
+                endRowIndex: 18,
+                startColumnIndex: 0,
+                endColumnIndex: 7
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  },
+                  horizontalAlignment: 'LEFT',
+                  verticalAlignment: 'MIDDLE'
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)'
+            }
+          },
+          
           // Add borders to the account table
           {
             updateBorders: {
@@ -951,54 +1173,28 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Format column widths for better readability
+          // Setting all columns to 230 pixels width for consistent layout
           {
             updateDimensionProperties: {
               range: {
                 sheetId: overviewSheetId,
                 dimension: 'COLUMNS',
                 startIndex: 0,
-                endIndex: 1
-              },
-              properties: {
-                pixelSize: 200
-              },
-              fields: 'pixelSize'
-            }
-          },
-          
-          // Format second column (Last Activity)
-          {
-            updateDimensionProperties: {
-              range: {
-                sheetId: overviewSheetId,
-                dimension: 'COLUMNS',
-                startIndex: 1,
-                endIndex: 2
-              },
-              properties: {
-                pixelSize: 120
-              },
-              fields: 'pixelSize'
-            }
-          },
-          
-          // Auto-resize other columns
-          {
-            autoResizeDimensions: {
-              dimensions: {
-                sheetId: overviewSheetId,
-                dimension: 'COLUMNS',
-                startIndex: 2,
                 endIndex: 7
-              }
+              },
+              properties: {
+                pixelSize: 230
+              },
+              fields: 'pixelSize'          
             }
           }
         ]
       })
     });
     
-    // Add conditional formatting for priority cells
+
+    
+    // Add status dropdown and conditional formatting
     await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
       method: 'POST',
       headers: {
@@ -1007,29 +1203,68 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       },
       body: JSON.stringify({
         requests: [
-          // High priority - red background
+          // Status dropdown for all account rows
+          {
+            setDataValidation: {
+              range: {
+                sheetId: overviewSheetId,
+                startRowIndex: 18, // Start after headers
+                endRowIndex: 100,
+                startColumnIndex: 2, // Status column
+                endColumnIndex: 3
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'PG' },
+                    { userEnteredValue: 'Discovery' },
+                    { userEnteredValue: 'Scoping' },
+                    { userEnteredValue: 'POC' },
+                    { userEnteredValue: 'Validation Planning' },
+                    { userEnteredValue: 'Technical Validation' },
+                    { userEnteredValue: 'Negotiation' },
+                    { userEnteredValue: 'Submit for Order Processing' },
+                    { userEnteredValue: 'Closed' },
+                    { userEnteredValue: 'Hot Prospect - Strategic PG' },
+                    { userEnteredValue: 'Channel Engagement' },
+                    { userEnteredValue: 'Nurture' },
+                    { userEnteredValue: 'Research' },
+                    { userEnteredValue: 'Moved From Patch' },
+                    { userEnteredValue: 'Disqualified' },
+                    { userEnteredValue: 'Customer' },
+                    { userEnteredValue: 'Past Customer' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          },
+          
+          // Conditional formatting for PG status (orange)
           {
             addConditionalFormatRule: {
               rule: {
                 ranges: [
                   {
                     sheetId: overviewSheetId,
-                    startRowIndex: 17,
+                    startRowIndex: 18,
                     endRowIndex: 100,
-                    startColumnIndex: 3,
-                    endColumnIndex: 4
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
                   }
                 ],
                 booleanRule: {
                   condition: {
                     type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'High' }]
+                    values: [{ userEnteredValue: 'PG' }]
                   },
                   format: {
                     backgroundColor: {
-                      red: 0.95,
-                      green: 0.8,
-                      blue: 0.8
+                      red: 0.9,
+                      green: 0.6,
+                      blue: 0.2
                     }
                   }
                 }
@@ -1038,29 +1273,29 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Medium priority - yellow background
+          // Conditional formatting for Discovery status (green)
           {
             addConditionalFormatRule: {
               rule: {
                 ranges: [
                   {
                     sheetId: overviewSheetId,
-                    startRowIndex: 17,
+                    startRowIndex: 18,
                     endRowIndex: 100,
-                    startColumnIndex: 3,
-                    endColumnIndex: 4
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
                   }
                 ],
                 booleanRule: {
                   condition: {
                     type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Medium' }]
+                    values: [{ userEnteredValue: 'Discovery' }]
                   },
                   format: {
                     backgroundColor: {
-                      red: 1.0,
-                      green: 0.95,
-                      blue: 0.8
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
                     }
                   }
                 }
@@ -1069,34 +1304,504 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Low priority - green background
+          // Conditional formatting for Scoping status (green)
           {
             addConditionalFormatRule: {
               rule: {
                 ranges: [
                   {
                     sheetId: overviewSheetId,
-                    startRowIndex: 17,
+                    startRowIndex: 18,
                     endRowIndex: 100,
-                    startColumnIndex: 3,
-                    endColumnIndex: 4
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
                   }
                 ],
                 booleanRule: {
                   condition: {
                     type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Low' }]
+                    values: [{ userEnteredValue: 'Scoping' }]
                   },
                   format: {
                     backgroundColor: {
-                      red: 0.85,
-                      green: 0.95,
-                      blue: 0.85
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
                     }
                   }
                 }
               },
               index: 2
+            }
+          },
+          
+          // Conditional formatting for POC status (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'POC' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 3
+            }
+          }
+        ]
+      })
+    });
+    
+    // Add the rest of the conditional formatting for status values
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          // Validation Planning (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Validation Planning' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 4
+            }
+          },
+          
+          // Technical Validation (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Technical Validation' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 5
+            }
+          },
+          
+          // Negotiation (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Negotiation' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 6
+            }
+          },
+          
+          // Submit for Order Processing (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Submit for Order Processing' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 7
+            }
+          }
+        ]
+      })
+    });
+    
+    // Finish the remaining status conditional formatting
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          // Closed (green)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Closed' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.7,
+                      blue: 0.4
+                    }
+                  }
+                }
+              },
+              index: 8
+            }
+          },
+          
+          // Hot Prospect - Strategic PG (red)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Hot Prospect - Strategic PG' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.8,
+                      green: 0.2,
+                      blue: 0.2
+                    }
+                  }
+                }
+              },
+              index: 9
+            }
+          },
+          
+          // Channel Engagement (purple)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Channel Engagement' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.4,
+                      green: 0.2,
+                      blue: 0.6
+                    }
+                  }
+                }
+              },
+              index: 10
+            }
+          },
+          
+          // Nurture (blue)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Nurture' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.4,
+                      blue: 0.8
+                    }
+                  }
+                }
+              },
+              index: 11
+            }
+          }
+        ]
+      })
+    });
+    
+    // Final batch of status conditional formatting
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          // Research (blue)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Research' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.2,
+                      green: 0.4,
+                      blue: 0.8
+                    }
+                  }
+                }
+              },
+              index: 12
+            }
+          },
+          
+          // Moved From Patch (dark gray)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Moved From Patch' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.3,
+                      green: 0.3,
+                      blue: 0.3
+                    }
+                  }
+                }
+              },
+              index: 13
+            }
+          },
+          
+          // Disqualified (dark gray)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Disqualified' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.3,
+                      green: 0.3,
+                      blue: 0.3
+                    }
+                  }
+                }
+              },
+              index: 14
+            }
+          },
+          
+          // Customer (purple)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Customer' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.5,
+                      green: 0.3,
+                      blue: 0.7
+                    }
+                  }
+                }
+              },
+              index: 15
+            }
+          },
+          
+          // Past Customer (dark orange)
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: overviewSheetId,
+                    startRowIndex: 18,
+                    endRowIndex: 100,
+                    startColumnIndex: 2,
+                    endColumnIndex: 3
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Past Customer' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.7,
+                      green: 0.4,
+                      blue: 0.2
+                    }
+                  }
+                }
+              },
+              index: 16
             }
           }
         ]
@@ -1110,13 +1815,15 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
     return false;
   }
 }
-
 /**
  * Apply enhanced account plan formatting with professional styling
  * 
- * This function applies professional formatting to individual account plan sheets
- * including section headers, text styling, column widths, and conditional formatting
- * to improve readability and visual hierarchy.
+ * This function has been updated to:
+ * 1. Change all blue fill colors to #1e40af
+ * 2. Format cell A16 with "Overview" text in white/bold/size 14
+ * 3. Adjust row structure for contacts section
+ * 4. Apply white text and bold formatting to row headers
+ * 5. Make text in row 17 bold
  * 
  * @param {string} spreadsheetId - ID of the spreadsheet
  * @param {string} sheetName - Name of the sheet to format
@@ -1124,6 +1831,12 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
  */
  async function applyEnhancedAccountPlanFormatting(spreadsheetId, sheetName) {
   try {
+    console.log("Applying enhanced formatting with new structure to sheet:", sheetName);
+    if (!spreadsheetId || !sheetName) {
+      console.error("Missing spreadsheetId or sheetName in applyEnhancedAccountPlanFormatting");
+      return false;
+    }
+
     if (!authToken) {
       authToken = await getAuthToken();
     }
@@ -1147,7 +1860,9 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       return false;
     }
     
-    // Apply enhanced formatting to match your template exactly
+    console.log("Found sheet ID for formatting:", sheetId);
+
+    // Apply enhanced formatting to match the updated requirements
     await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
       method: 'POST',
       headers: {
@@ -1171,7 +1886,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Format title section with professional blue header
+          // Format title section with royal blue header - Updated to #1e40af
           {
             repeatCell: {
               range: {
@@ -1179,12 +1894,12 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 startRowIndex: 0,
                 endRowIndex: 2,
                 startColumnIndex: 0,
-                endColumnIndex: 8
+                endColumnIndex: 10
               },
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.0,
+                    red: 0.0, // Updated to match #0077d6
                     green: 0.47,
                     blue: 0.84
                   },
@@ -1205,24 +1920,114 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Format section headers (ACCOUNT PROFILE, EXECUTIVE SUMMARY, etc.)
+          // Format account profile field labels with bold text (first column)
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 4,
-                endRowIndex: 5,
+                startRowIndex: 3,
+                endRowIndex: 13,
                 startColumnIndex: 0,
-                endColumnIndex: 8
+                endColumnIndex: 1
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format tech stack field labels (fourth column per updated requirement)
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 3,
+                endRowIndex: 4,
+                startColumnIndex: 3,
+                endColumnIndex: 4
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+
+          // Format "Assessment:" label
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 3,
+                endRowIndex: 4,
+                startColumnIndex: 4,
+                endColumnIndex: 5
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format "Partner Rep:" label
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 3,
+                endRowIndex: 4,
+                startColumnIndex: 5,
+                endColumnIndex: 6
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format cell A16 ("Overview") in blue (#1e40af) with white text, bold, size 14
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 15,
+                endRowIndex: 16,
+                startColumnIndex: 0,
+                endColumnIndex: 10
               },
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.9,
-                    green: 0.9,
-                    blue: 0.95
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
                   },
                   textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    fontSize: 14,
                     bold: true
                   }
                 }
@@ -1231,7 +2036,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Format the EXECUTIVE SUMMARY section header
+          // Make all text in row 17 bold (Current Situation, Business Challenges, etc.)
           {
             repeatCell: {
               range: {
@@ -1239,85 +2044,69 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 startRowIndex: 17,
                 endRowIndex: 18,
                 startColumnIndex: 0,
-                endColumnIndex: 8
+                endColumnIndex: 10
               },
               cell: {
                 userEnteredFormat: {
-                  backgroundColor: {
-                    red: 0.9,
-                    green: 0.9,
-                    blue: 0.95
-                  },
                   textFormat: {
                     bold: true
                   }
                 }
               },
-              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+              fields: 'userEnteredFormat.textFormat'
             }
           },
-          
-          // Format the STRATEGIC OVERVIEW section header
+                    // Add specific formatting for "Current Situation:" cell to ensure it's bold
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 24,
-                endRowIndex: 25,
+                startRowIndex: 17,
+                endRowIndex: 18,
                 startColumnIndex: 0,
-                endColumnIndex: 8
+                endColumnIndex: 1
               },
               cell: {
                 userEnteredFormat: {
-                  backgroundColor: {
-                    red: 0.9,
-                    green: 0.9,
-                    blue: 0.95
-                  },
                   textFormat: {
                     bold: true
                   }
                 }
               },
-              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+              fields: 'userEnteredFormat.textFormat'
             }
           },
-          
-          // Format the KEY CONTACTS section header
+
+          // Make all other overview field labels bold
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 33,
-                endRowIndex: 34,
+                startRowIndex: 18,
+                endRowIndex: 21,
                 startColumnIndex: 0,
-                endColumnIndex: 8
+                endColumnIndex: 5
               },
               cell: {
                 userEnteredFormat: {
-                  backgroundColor: {
-                    red: 0.9,
-                    green: 0.9,
-                    blue: 0.95
-                  },
                   textFormat: {
                     bold: true
                   }
                 }
               },
-              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+              fields: 'userEnteredFormat.textFormat'
             }
           },
           
-          // Format the KEY CONTACTS table headers
+          // Format contacts table headers row
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 35,
-                endRowIndex: 36,
+                startRowIndex: 23,
+                endRowIndex: 24,
                 startColumnIndex: 0,
-                endColumnIndex: 6
+                endColumnIndex: 8
               },
               cell: {
                 userEnteredFormat: {
@@ -1336,78 +2125,149 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Format field labels (left column) with bold text
+          // Format C-Level section row with blue background (#1e40af) and white text
+          // Now at row 25 (index 24)
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 6,
-                endRowIndex: 16,
+                startRowIndex: 24,
+                endRowIndex: 25,
                 startColumnIndex: 0,
-                endColumnIndex: 1
+                endColumnIndex: 8
               },
               cell: {
                 userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
                   textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
                     bold: true
                   }
                 }
               },
-              fields: 'userEnteredFormat.textFormat'
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
             }
           },
           
-          // Format field labels for Executive Summary with bold text
+          // Format Managers/Directors section row with blue background (#1e40af) and white text
+          // Now at row 32 (index 31)
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 19,
-                endRowIndex: 23,
-                startColumnIndex: 0,
-                endColumnIndex: 1
-              },
-              cell: {
-                userEnteredFormat: {
-                  textFormat: {
-                    bold: true
-                  }
-                }
-              },
-              fields: 'userEnteredFormat.textFormat'
-            }
-          },
-          
-          // Format field labels for Strategic Overview with bold text
-          {
-            repeatCell: {
-              range: {
-                sheetId: sheetId,
-                startRowIndex: 26,
+                startRowIndex: 31,
                 endRowIndex: 32,
                 startColumnIndex: 0,
-                endColumnIndex: 1
+                endColumnIndex: 8
               },
               cell: {
                 userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
                   textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
                     bold: true
                   }
                 }
               },
-              fields: 'userEnteredFormat.textFormat'
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
             }
           },
           
-          // Add borders to the key contacts table
+          // Format Individual Contributors section row with blue background and white text
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 42, // Updated from 37 to 42 to match new position
+                endRowIndex: 43,   // Updated from 38 to 43
+                startColumnIndex: 0,
+                endColumnIndex: 8  // Make sure this is 8 instead of 6
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, 
+                    green: 0.47,
+                    blue: 0.84
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+            }
+          },
+          
+          // Set all column widths to 230 pixels for consistent layout
+          {
+            updateDimensionProperties: {
+              range: {
+                sheetId: sheetId, // Use the correct variable
+                dimension: 'COLUMNS',
+                startIndex: 0,
+                endIndex: 10
+              },
+              properties: {
+                pixelSize: 230
+              },
+              fields: 'pixelSize'
+            }
+          },
+          
+          // Add light gray background to tech stack items
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 4,
+                endRowIndex: 12,
+                startColumnIndex: 3,
+                endColumnIndex: 4
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.95,
+                    green: 0.95,
+                    blue: 0.95
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.backgroundColor'
+            }
+          },
+          
+          // NEW BORDER AROUND TECH STACK AND PARTNER REP SECTION
           {
             updateBorders: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 35,
-                endRowIndex: 39,
-                startColumnIndex: 0,
-                endColumnIndex: 6
+                startRowIndex: 3,  // Row 4 (0-indexed)
+                endRowIndex: 12,   // Row 14 (0-indexed)
+                startColumnIndex: 3, // Column D (0-indexed)
+                endColumnIndex: 6   // Column G (0-indexed)
               },
               top: {
                 style: 'SOLID',
@@ -1442,47 +2302,15 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Set column width for first column (labels)
-          {
-            updateDimensionProperties: {
-              range: {
-                sheetId: sheetId,
-                dimension: 'COLUMNS',
-                startIndex: 0,
-                endIndex: 1
-              },
-              properties: {
-                pixelSize: 180 // Width for the first column with labels
-              },
-              fields: 'pixelSize'
-            }
-          },
-          
-          // Set column width for content column
-          {
-            updateDimensionProperties: {
-              range: {
-                sheetId: sheetId,
-                dimension: 'COLUMNS',
-                startIndex: 1,
-                endIndex: 2
-              },
-              properties: {
-                pixelSize: 400 // Width for content column
-              },
-              fields: 'pixelSize'
-            }
-          },
-          
           // Enable text wrapping for content cells
           {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 6,
-                endRowIndex: 39,
-                startColumnIndex: 1,
-                endColumnIndex: 8
+                startRowIndex: 3,
+                endRowIndex: 40,
+                startColumnIndex: 0,
+                endColumnIndex: 10
               },
               cell: {
                 userEnteredFormat: {
@@ -1491,12 +2319,217 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
               },
               fields: 'userEnteredFormat.wrapStrategy'
             }
+          },
+          
+          // Format text in Column A, Row 15 as bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 14,  // 0-indexed, so row 15 is index 14
+                endRowIndex: 15,    // end is exclusive, so 15 to include only row 15
+                startColumnIndex: 0, // Column A is index 0
+                endColumnIndex: 1
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Ensure Column B, Row 15 is NOT bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 14,  // 0-indexed, so row 15 is index 14
+                endRowIndex: 15,    // end is exclusive, so 15 to include only row 15
+                startColumnIndex: 1, // Column B is index 1
+                endColumnIndex: 2
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format text in Column A, Rows 17-20 as bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,  // 0-indexed, so row 17 is index 16
+                endRowIndex: 20,    // end is exclusive, so 20 to include rows 17-20
+                startColumnIndex: 0, // Column A is index 0
+                endColumnIndex: 1
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format text in Column C, Rows 17-20 as bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 20,
+                startColumnIndex: 2, // Column C is index 2
+                endColumnIndex: 3
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format text in Column E, Rows 17-20 as bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 20,
+                startColumnIndex: 4, // Column E is index 4
+                endColumnIndex: 5
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Format text in Column G, Rows 17-18 as bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 18, // Only rows 17-18 for column G
+                startColumnIndex: 6, // Column G is index 6
+                endColumnIndex: 7
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          
+          // Ensure Columns B, D, F, H Rows 17-20 are NOT bold 
+          // This ensures they have normal formatting even if previously bold
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 20,
+                startColumnIndex: 1, // Column B is index 1
+                endColumnIndex: 2
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 20,
+                startColumnIndex: 3, // Column D is index 3
+                endColumnIndex: 4
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 20,
+                startColumnIndex: 5, // Column F is index 5
+                endColumnIndex: 6
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
+          },
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 16,
+                endRowIndex: 18, // Only rows 17-18 for column H
+                startColumnIndex: 7, // Column H is index 7
+                endColumnIndex: 8
+              },
+              cell: {
+                userEnteredFormat: {
+                  textFormat: {
+                    bold: false
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.textFormat'
+            }
           }
         ]
       })
     });
     
-    // Add data validation (dropdowns)
+    // Add data validation for dropdowns
     await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
       method: 'POST',
       headers: {
@@ -1510,8 +2543,8 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             setDataValidation: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 11,
-                endRowIndex: 12,
+                startRowIndex: 9,
+                endRowIndex: 10,
                 startColumnIndex: 1,
                 endColumnIndex: 2
               },
@@ -1530,39 +2563,13 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Region dropdown
+          // NEW: Add "Yes", "No", "Unknown" dropdown for the Tech Stack Assessment column
           {
             setDataValidation: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 14,
-                endRowIndex: 15,
-                startColumnIndex: 1,
-                endColumnIndex: 2
-              },
-              rule: {
-                condition: {
-                  type: 'ONE_OF_LIST',
-                  values: [
-                    { userEnteredValue: 'North America' },
-                    { userEnteredValue: 'EMEA' },
-                    { userEnteredValue: 'APAC' },
-                    { userEnteredValue: 'LATAM' }
-                  ]
-                },
-                strict: false,
-                showCustomUi: true
-              }
-            }
-          },
-          
-          // Role dropdown for Key Contacts
-          {
-            setDataValidation: {
-              range: {
-                sheetId: sheetId,
-                startRowIndex: 36,
-                endRowIndex: 39,
+                startRowIndex: 4,
+                endRowIndex: 12,
                 startColumnIndex: 4,
                 endColumnIndex: 5
               },
@@ -1570,16 +2577,166 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 condition: {
                   type: 'ONE_OF_LIST',
                   values: [
-                    { userEnteredValue: 'Decision Maker' },
-                    { userEnteredValue: 'Influencer' },
-                    { userEnteredValue: 'Champion' },
-                    { userEnteredValue: 'User' },
-                    { userEnteredValue: 'Technical Contact' }
+                    { userEnteredValue: 'Yes' },
+                    { userEnteredValue: 'No' },
+                    { userEnteredValue: 'Unknown' }
                   ]
                 },
-                strict: false,
+                strict: true,
                 showCustomUi: true
               }
+            }
+          },
+          
+          // Add "Unaware", "Aware", "Engaged" dropdown for the Engagement Status column
+          {
+            setDataValidation: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 25,
+                endRowIndex: 30, // Stopping before rows 31-32
+                startColumnIndex: 7, // Engagement Status column (8th column, 0-indexed)
+                endColumnIndex: 8
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'Unaware' },
+                    { userEnteredValue: 'Aware' },
+                    { userEnteredValue: 'Engaged' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          },
+          // Second rule: Add "Unaware", "Aware", "Engaged" dropdown for rows 33-41 (Managers/Directors, excluding rows 31-32)
+          {
+            setDataValidation: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 32, // Start after rows 31-32
+                endRowIndex: 41,
+                startColumnIndex: 7, // Engagement Status column (8th column, 0-indexed)
+                endColumnIndex: 8
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'Unaware' },
+                    { userEnteredValue: 'Aware' },
+                    { userEnteredValue: 'Engaged' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          }  
+        ]        
+      })
+    });
+    
+    // NEW: Add conditional formatting for Tech Stack Assessment dropdown values
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          // For "Yes" values - Green background
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 4,  // Row 5 (0-indexed)
+                    endRowIndex: 12,   // Row 13 (0-indexed)
+                    startColumnIndex: 4, // Column E (0-indexed)
+                    endColumnIndex: 5   // Column F (0-indexed)
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Yes' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.82,
+                      green: 0.95,
+                      blue: 0.82
+                    }
+                  }
+                }
+              },
+              index: 0
+            }
+          },
+          // For "No" values - Red background
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 4,  // Row 5 (0-indexed)
+                    endRowIndex: 12,   // Row 13 (0-indexed)
+                    startColumnIndex: 4, // Column E (0-indexed)
+                    endColumnIndex: 5   // Column F (0-indexed)
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'No' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.95,
+                      green: 0.82,
+                      blue: 0.82
+                    }
+                  }
+                }
+              },
+              index: 1
+            }
+          },
+          // For "Unknown" values - Yellow background
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 4,  // Row 5 (0-indexed)
+                    endRowIndex: 12,   // Row 13 (0-indexed)
+                    startColumnIndex: 4, // Column E (0-indexed)
+                    endColumnIndex: 5   // Column F (0-indexed)
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Unknown' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.98,
+                      green: 0.91,
+                      blue: 0.71
+                    }
+                  }
+                }
+              },
+              index: 2
             }
           }
         ]
@@ -1593,8 +2750,11 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
   }
 }
 
+
 /**
  * Apply simple formatting to account plan sheets - a fallback when advanced formatting fails
+ * This simplified version still maintains the key visual elements from the screenshot
+ * 
  * @param {string} spreadsheetId - ID of the spreadsheet
  * @param {string} sheetName - Name of the sheet
  * @returns {Promise<boolean>} Success status
@@ -1624,7 +2784,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       return false;
     }
     
-    // Apply simplified formatting without conditional formatting
+    // Apply simplified formatting that still captures key elements of the screenshot
     await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
       method: 'POST',
       headers: {
@@ -1633,25 +2793,22 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
       },
       body: JSON.stringify({
         requests: [
-          // Set sheet background to white for clean look
+          // Set tab color
           {
             updateSheetProperties: {
               properties: {
                 sheetId: sheetId,
-                gridProperties: {
-                  hideGridlines: false
-                },
                 tabColor: {
                   red: 0.0,
                   green: 0.47,
                   blue: 0.84
                 }
               },
-              fields: "gridProperties.hideGridlines,tabColor"
+              fields: "tabColor"
             }
           },
           
-          // Format title and date (rows 0-1) - professional blue header
+          // Format title section with blue header - Updated to #1e40af
           {
             repeatCell: {
               range: {
@@ -1659,12 +2816,12 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                 startRowIndex: 0,
                 endRowIndex: 2,
                 startColumnIndex: 0,
-                endColumnIndex: 15
+                endColumnIndex: 9
               },
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.0,
+                    red: 0.0, // Updated to match #0077d6
                     green: 0.47,
                     blue: 0.84
                   },
@@ -1674,14 +2831,43 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
                       green: 1.0,
                       blue: 1.0
                     },
-                    fontSize: 14,
+                    fontSize: 12,
                     bold: true
-                  },
-                  horizontalAlignment: 'LEFT',
-                  verticalAlignment: 'MIDDLE'
+                  }
                 }
               },
-              fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)'
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+            }
+          },
+          
+          // Format Overview section header - Updated to #1e40af
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 15,
+                endRowIndex: 16,
+                startColumnIndex: 0,
+                endColumnIndex: 9
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
             }
           },
           
@@ -1690,8 +2876,8 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             repeatCell: {
               range: {
                 sheetId: sheetId,
-                startRowIndex: 4,
-                endRowIndex: 100,
+                startRowIndex: 3,
+                endRowIndex: 13,
                 startColumnIndex: 0,
                 endColumnIndex: 1
               },
@@ -1706,15 +2892,150 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
             }
           },
           
-          // Auto-resize columns for better readability
+          // Format contact section headers - Updated to #1e40af
           {
-            autoResizeDimensions: {
-              dimensions: {
+            repeatCell: {
+              range: {
                 sheetId: sheetId,
+                startRowIndex: 24,
+                endRowIndex: 25,
+                startColumnIndex: 0,
+                endColumnIndex: 6
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+            }
+          },
+          
+          // Format managers section header - Updated to #1e40af
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 31,
+                endRowIndex: 32,
+                startColumnIndex: 0,
+                endColumnIndex: 6
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+            }
+          },
+          
+          // Format individual contributors section header - Updated to #1e40af
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 42, // Updated from 37 to 42 to match new row position
+                endRowIndex: 43,   // Updated from 38 to 43
+                startColumnIndex: 0,
+                endColumnIndex: 8  // Make sure this is 8 to match other headers
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0, // Updated to match #0077d6
+                    green: 0.47,
+                    blue: 0.84
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  }
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat)'
+            }
+          },
+
+          
+          // Set all column widths to 266 pixels (per requirement)
+          {
+            updateDimensionProperties: {
+              range: {
+                sheetId: sheetId, // Use the correct variable
                 dimension: 'COLUMNS',
                 startIndex: 0,
-                endIndex: 15
-              }
+                endIndex: 10
+              },
+              properties: {
+                pixelSize: 230
+              },
+              fields: 'pixelSize'          
+            }
+          },
+          
+          // Format tech stack labels with gray background
+          {
+            repeatCell: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 4,
+                endRowIndex: 12,
+                startColumnIndex: 3,
+                endColumnIndex: 4
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.95,
+                    green: 0.95,
+                    blue: 0.95
+                  }
+                }
+              },
+              fields: 'userEnteredFormat.backgroundColor'
+            }
+          },
+          
+          // Delete row 23
+          {
+            deleteRange: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 23,
+                endRowIndex: 24,
+                startColumnIndex: 0,
+                endColumnIndex: 10
+              },
+              shiftDimension: "ROWS"
             }
           }
         ]
@@ -1734,7 +3055,7 @@ async function getSheetDetails(spreadsheetId, forceRefresh = false) {
  * @param {string} spreadsheetId - ID of the spreadsheet
  * @returns {Promise<boolean>} Success status
  */
-async function applySimplifiedOverviewFormatting(spreadsheetId) {
+ async function applySimplifiedOverviewFormatting(spreadsheetId) {
   try {
     if (!authToken) {
       authToken = await getAuthToken();
@@ -1794,7 +3115,7 @@ async function applySimplifiedOverviewFormatting(spreadsheetId) {
                     fontSize: 18,
                     bold: true
                   },
-                  horizontalAlignment: 'CENTER',
+                  horizontalAlignment: 'LEFT',
                   verticalAlignment: 'MIDDLE'
                 }
               },
@@ -1814,11 +3135,16 @@ async function applySimplifiedOverviewFormatting(spreadsheetId) {
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.93,
-                    green: 0.95,
-                    blue: 0.98
+                    red: 0.0,
+                    green: 0.47,
+                    blue: 0.84
                   },
                   textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
                     bold: true
                   },
                   horizontalAlignment: 'CENTER'
@@ -1827,15 +3153,50 @@ async function applySimplifiedOverviewFormatting(spreadsheetId) {
               fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)'
             }
           },
-          // Auto-resize columns
+          // Format Strategic Accounts header
           {
-            autoResizeDimensions: {
-              dimensions: {
+            repeatCell: {
+              range: {
+                sheetId: overviewSheetId,
+                startRowIndex: 17,
+                endRowIndex: 18,
+                startColumnIndex: 0,
+                endColumnIndex: 7
+              },
+              cell: {
+                userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.0,
+                    green: 0.0,
+                    blue: 0.0
+                  },
+                  textFormat: {
+                    foregroundColor: {
+                      red: 1.0,
+                      green: 1.0,
+                      blue: 1.0
+                    },
+                    bold: true
+                  },
+                  horizontalAlignment: 'LEFT'
+                }
+              },
+              fields: 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)'
+            }
+          },
+          // Set all column widths to 230 pixels
+          {
+            updateDimensionProperties: {
+              range: {
                 sheetId: overviewSheetId,
                 dimension: 'COLUMNS',
                 startIndex: 0,
                 endIndex: 7
-              }
+              },
+              properties: {
+                pixelSize: 230
+              },
+              fields: 'pixelSize'          
             }
           }
         ]
@@ -1849,107 +3210,33 @@ async function applySimplifiedOverviewFormatting(spreadsheetId) {
     return false;
   }
 }
+
 // =============================================================================
-// ACCOUNT PLAN SHEET MANAGEMENT
+// SECTION 9: ADDITIONAL FORMATTING AND FORMULAS
 // =============================================================================
 
 /**
- * Create enhanced template data for an account plan with professional structure
+ * Add formulas and conditional formatting to the account plan sheet
  * 
- * This function creates a well-structured template for each account plan
- * with sections for profile, executive summary, strategic overview, and contacts.
- * It includes default values for dropdown fields.
+ * This function adds conditional formatting for status fields and role fields,
+ * providing visual cues for different values to improve data interpretation.
+ * Updated to work with the new template structure based on requirements.
  * 
- * @param {string} accountName - Name of the account
- * @returns {Array} Template data as a 2D array
- */
- function createEnhancedAccountPlanTemplateData(accountName) {
-  // Get current date
-  const currentDate = new Date().toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-  
-  // Create template exactly matching your CSV format
-  const templateData = [
-    // Header section
-    [`${accountName} - Strategic Account Plan`],
-    [`Created: ${currentDate}`],
-    [''],
-    
-    // Account Profile section
-    ['ACCOUNT PROFILE'],
-    [''],
-    ['Account Name:', accountName],
-    ['Industry:', ''],
-    ['Annual Revenue ($):', ''],
-    ['Company Size:', ''],
-    ['Website:', ''],
-    ['LinkedIn:', ''],
-    ['Account Status:', 'Active'], // Default value for dropdown
-    ['Account Owner:', ''],
-    ['Region:', 'North America'], // Default value for dropdown
-    ['Last Updated:', currentDate],
-    [''],
-    
-    // Executive Summary section
-    ['EXECUTIVE SUMMARY'],
-    [''],
-    ['Current Situation:', ''],
-    ['Key Pain Points:', ''],
-    ['Value Proposition:', ''],
-    ['Success Metrics:', ''],
-    [''],
-    
-    // Strategic Overview section
-    ['STRATEGIC OVERVIEW'],
-    [''],
-    ['Business Challenges:', ''],
-    ['Strategic Goals:', ''],
-    ['Our Solution:', ''],
-    ['Success Criteria:', ''],
-    ['Risks/Concerns:', ''],
-    ['Mitigation Strategy:', ''],
-    [''],
-    
-    // Key Contacts section
-    ['KEY CONTACTS'],
-    [''],
-    ['Name', 'Title', 'Email', 'Phone', 'Role', 'Notes'],
-    ['', '', '', '', '', ''],
-    ['', '', '', '', '', ''],
-    ['', '', '', '', '', ''],
-    ['']
-  ];
-  
-  return templateData;
-}
-
-/**
- * Update the existing createAccountPlanTemplateData function to use the enhanced version
- * This ensures backward compatibility with the extension
- */
-function createAccountPlanTemplateData(accountName) {
-  return createEnhancedAccountPlanTemplateData(accountName);
-}
-
-/**
- * Update formulas in a sheet to ensure they work correctly
  * @param {string} spreadsheetId - ID of the spreadsheet
  * @param {string} sheetName - Name of the sheet
  * @returns {Promise<boolean>} Success status
  */
-async function updateSheetFormulas(spreadsheetId, sheetName) {
+ async function addFormulasAndConditionalFormatting(spreadsheetId, sheetName) {
   try {
     if (!authToken) {
       authToken = await getAuthToken();
     }
     
-    // Get the sheet ID
+    // Get the sheet ID by name
     const sheetInfo = await getSheetDetails(spreadsheetId);
-    let sheetId = null;
     
+    // Find the sheet ID
+    let sheetId = null;
     if (sheetInfo.sheets) {
       for (const sheet of sheetInfo.sheets) {
         if (sheet.properties && sheet.properties.title === sheetName) {
@@ -1960,34 +3247,782 @@ async function updateSheetFormulas(spreadsheetId, sheetName) {
     }
     
     if (!sheetId) {
-      console.warn(`Sheet "${sheetName}" not found for formula update`);
+      console.warn(`Sheet "${sheetName}" not found`);
       return false;
     }
     
-    // No formulas needed for the simplified sheet structure
+    // Add conditional formatting for priority and status cells
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          // Conditional formatting for Account Status
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 9,
+                    endRowIndex: 10,
+                    startColumnIndex: 1,
+                    endColumnIndex: 2
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Active' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.85,
+                      green: 0.95,
+                      blue: 0.85
+                    }
+                  }
+                }
+              },
+              index: 0
+            }
+          },
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 9,
+                    endRowIndex: 10,
+                    startColumnIndex: 1,
+                    endColumnIndex: 2
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'On Hold' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 1.0,
+                      green: 0.95,
+                      blue: 0.8
+                    }
+                  }
+                }
+              },
+              index: 1
+            }
+          },
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 9,
+                    endRowIndex: 10,
+                    startColumnIndex: 1,
+                    endColumnIndex: 2
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'TEXT_EQ',
+                    values: [{ userEnteredValue: 'Churned' }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.95,
+                      green: 0.8,
+                      blue: 0.8
+                    }
+                  }
+                }
+              },
+              index: 2
+            }
+          },
+          
+          // Add borders to the contacts tables
+          {
+            updateBorders: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 23,
+                endRowIndex: 30,
+                startColumnIndex: 0,
+                endColumnIndex: 8  // Updated from 6 to 8
+              },
+              top: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              bottom: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              left: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              right: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerHorizontal: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerVertical: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              }
+            }
+          },
+          
+          
+          // Add borders to the managers contacts table
+          {
+            updateBorders: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 31,
+                endRowIndex: 41, // Updated from 36 to 41
+                startColumnIndex: 0,
+                endColumnIndex: 8
+              },
+
+              top: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              bottom: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              left: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              right: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerHorizontal: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerVertical: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              }
+            }
+          },
+          
+          
+          // Add borders to the individual contributors contacts table
+          {
+            updateBorders: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 42, // Updated from 37 to 42
+                endRowIndex: 60, // Updated from 41 to 60
+                startColumnIndex: 0,
+                endColumnIndex: 8
+              },
+
+              top: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              bottom: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              left: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              right: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerHorizontal: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              },
+              innerVertical: {
+                style: 'SOLID',
+                width: 1,
+                color: { red: 0.5, green: 0.5, blue: 0.5 }
+              }
+            }
+          },
+          
+          // Add alternating row colors to contacts sections for better readability
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 25,
+                    endRowIndex: 30,
+                    startColumnIndex: 0,
+                    endColumnIndex: 8  // Updated from 6 to 8
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'CUSTOM_FORMULA',
+                    values: [{ userEnteredValue: "=ISEVEN(ROW())" }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.95,
+                      green: 0.95,
+                      blue: 0.98
+                    }
+                  }
+                }
+              },
+              index: 3
+            }
+          },
+
+          // Add alternating row colors to managers section
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 32,
+                    endRowIndex: 41, // Updated from 36 to 41 to include 5 more rows
+                    startColumnIndex: 0,
+                    endColumnIndex: 8
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'CUSTOM_FORMULA',
+                    values: [{ userEnteredValue: "=ISEVEN(ROW())" }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.95,
+                      green: 0.95,
+                      blue: 0.98
+                    }
+                  }
+                }
+              },
+              index: 4
+            }
+          },
+
+          // Add alternating row colors to individual contributors section
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [
+                  {
+                    sheetId: sheetId,
+                    startRowIndex: 42, // Updated from 38 to 42 due to shifted position
+                    endRowIndex: 60, // Updated from 41 to 60 to include 17 more rows
+                    startColumnIndex: 0,
+                    endColumnIndex: 8
+                  }
+                ],
+                booleanRule: {
+                  condition: {
+                    type: 'CUSTOM_FORMULA',
+                    values: [{ userEnteredValue: "=ISEVEN(ROW())" }]
+                  },
+                  format: {
+                    backgroundColor: {
+                      red: 0.95,
+                      green: 0.95,
+                      blue: 0.98
+                    }
+                  }
+                }
+              },
+              index: 5
+            }
+          },
+          
+          // Add "Yes", "No", "Unknown" dropdown for the Assessment column
+          {
+            setDataValidation: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 4,
+                endRowIndex: 12,
+                startColumnIndex: 4,
+                endColumnIndex: 5
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'Yes' },
+                    { userEnteredValue: 'No' },
+                    { userEnteredValue: 'Unknown' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          },
+          
+          // Add "Unaware", "Aware", "Engaged" dropdown for the Engagement Status column
+          {
+            setDataValidation: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 25,
+                endRowIndex: 30,
+                startColumnIndex: 7, // Engagement Status column (8th column, 0-indexed)
+                endColumnIndex: 8
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'Unaware' },
+                    { userEnteredValue: 'Aware' },
+                    { userEnteredValue: 'Engaged' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          },
+          
+          // Add "Unaware", "Aware", "Engaged" dropdown for the Individual Contributors section
+          {
+            setDataValidation: {
+              range: {
+                sheetId: sheetId,
+                startRowIndex: 43, // First row after the "Individual Contributors" header
+                endRowIndex: 60,   // End of Individual Contributors section
+                startColumnIndex: 7, // Engagement Status column (8th column, 0-indexed)
+                endColumnIndex: 8
+              },
+              rule: {
+                condition: {
+                  type: 'ONE_OF_LIST',
+                  values: [
+                    { userEnteredValue: 'Unaware' },
+                    { userEnteredValue: 'Aware' },
+                    { userEnteredValue: 'Engaged' }
+                  ]
+                },
+                strict: true,
+                showCustomUi: true
+              }
+            }
+          }
+        ]
+      })
+    });
+    
     return true;
   } catch (error) {
-    console.error("Error updating sheet formulas:", error);
+    console.error("Error adding formulas and conditional formatting:", error);
     return false;
   }
 }
+// =============================================================================
+// SECTION 10: TEMPLATE POPULATION
+// =============================================================================
+
 /**
- * Create an account plan sheet in the master spreadsheet
+ * Populate an account plan with an enhanced template
+ * 
+ * This function takes a new account plan and populates it with the template data,
+ * then applies all necessary formatting and conditional formatting.
+ * 
+ * @param {string} spreadsheetId - ID of the spreadsheet
+ * @param {Object} accountData - Account data with name and company
+ * @returns {Promise<boolean>} Success status
+ */
+ async function populateEnhancedAccountPlanTemplate(spreadsheetId, accountData) {
+  try {
+    console.log(`Starting template population for: ${accountData.accountName}, Company: ${accountData.companyName || 'Your Company'}`);
+    
+    if (!spreadsheetId || !accountData || !accountData.accountName) {
+      throw new Error("Spreadsheet ID and account name are required");
+    }
+    
+    if (!authToken) {
+      authToken = await getAuthToken();
+    }
+    
+    // Create enhanced template data for the sheet, passing the company name
+    const templateData = createEnhancedAccountPlanTemplateData(
+      accountData.accountName,
+      accountData.companyName || 'Your Company'
+    );
+    
+    // Update the sheet with the enhanced template data
+    await updateSheetData(spreadsheetId, accountData.accountName, templateData);
+console.log("Template data applied successfully");
+
+// Apply enhanced formatting to match your template
+try {
+  const formattingSuccess = await applyEnhancedAccountPlanFormatting(spreadsheetId, accountData.accountName);
+  console.log(`Enhanced formatting applied with result: ${formattingSuccess}`);
+  
+  // Apply any additional formulas or conditional formatting
+  await addFormulasAndConditionalFormatting(spreadsheetId, accountData.accountName);
+} catch (formattingError) {
+  console.error("Error applying enhanced formatting:", formattingError);
+  
+  // Try with simplified formatting as fallback
+  try {
+    await applySimplifiedAccountPlanFormatting(spreadsheetId, accountData.accountName);
+    console.log("Applied simplified account plan formatting as fallback");
+  } catch (fallbackError) {
+    console.error("Even simplified formatting failed:", fallbackError);
+  }
+}
+
+    
+    // Refresh the overview sheet to include this new sheet
+    const overviewSuccess = await refreshOverviewContent(spreadsheetId);
+    console.log(`Overview refreshed with result: ${overviewSuccess}`);
+    
+    return true;
+  } catch (error) {
+    console.error("Error populating enhanced account plan template:", error);
+    throw error;
+  }
+}
+
+
+/**
+ * Update the existing populateAccountPlanTemplate function to use the enhanced version
+ * This ensures backward compatibility with the extension
+ */
+async function populateAccountPlanTemplate(spreadsheetId, accountData) {
+  return populateEnhancedAccountPlanTemplate(spreadsheetId, accountData);
+}
+
+// =============================================================================
+// SECTION 11: OVERVIEW SHEET MANAGEMENT
+// =============================================================================
+
+/**
+ * Function to refresh the overview sheet content with improved design
+ * 
+ * This function updates the overview sheet content with all account data
+ * and refreshes formatting. It's called when new accounts are created or
+ * after account deletion to keep the overview current.
+ /**
+ * Function to refresh the overview sheet content with improved design
+ * @param {string} spreadsheetId - ID of the master spreadsheet
+ * @returns {Promise<boolean>} Success status
+ */
+  async function refreshOverviewContent(spreadsheetId) {
+    try {
+      // Get all sheets in the spreadsheet
+      const sheetInfo = await getSheetDetails(spreadsheetId);
+      
+      if (!sheetInfo.sheets) {
+        throw new Error("Could not retrieve sheet information");
+      }
+      
+      // Get the company name from storage
+      const companyData = await new Promise(resolve => {
+        chrome.storage.local.get(['revpilot_companyName'], (result) => {
+          resolve(result);
+        });
+      });
+      
+      const companyName = companyData.revpilot_companyName || 'Your Company';
+      
+      // Filter out the Overview sheet and collect account sheets
+      const accountSheets = sheetInfo.sheets.filter(sheet => 
+        sheet.properties && sheet.properties.title !== 'Overview'
+      );
+      
+      // Format the current date
+      const currentDate = new Date().toLocaleDateString('en-US', {
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric'
+      });
+      
+      // Prepare data for the overview sheet
+      const year = new Date().getFullYear();
+      
+      // Create the base of the overview data - preserve the header formatting
+      const overviewData = [
+        [`${companyName} ${year} Account Plan`], // A1: Title
+        [''], // A2: Empty row
+        ['Created: ' + currentDate], // A3: Creation date
+        ['Last Updated: ' + currentDate], // A4: Last updated
+        [''], // A5: Empty row
+        ['Welcome to your account management dashboard'], // A6: Welcome message
+        ['Track, manage, and optimize your strategic account relationships in one place'], // A7: Instruction
+        [''], // A8: Empty row
+        ['DASHBOARD METRICS'], // A9: Metrics header
+        [''], // A10: Empty row
+        ['Total Accounts'], // A11: Only Total Accounts metric
+        ['=COUNTA(A19:A100)'], // A12: Formula updated to match new row positioning
+        [''], // A13: Empty row
+        [''], // A14: Empty row
+        ['ACCOUNT OVERVIEW:'], // A15: Accounts header
+        [''], // A16: Empty row
+        // Table headers in row 17
+        ['Account Name', 'Last Activity', 'Status', 'SFDC Link', 'Owner', 'Annual Value', 'Next Action'],
+        ['Strategic Accounts (Top 20)'] // A18: Strategic accounts header
+      ];
+      
+      // Limit to first 20 accounts for Strategic section
+      const strategicAccounts = accountSheets.slice(0, 20);
+      
+      // Add Strategic accounts to the overview
+      strategicAccounts.forEach(sheet => {
+        overviewData.push([
+          sheet.properties.title,
+          currentDate,
+          'PG', // Default status - use PG as default based on screenshots
+          '',    // Empty SFDC Link
+          '',    // Empty Owner
+          0,     // Default Annual Value
+          'Review account plan' // Default Next Action
+        ]);
+      });
+      
+      // Add "Tiered Accounts" header after Strategic accounts
+      if (accountSheets.length > 20) {
+        overviewData.push(['🔺 Tiered Accounts (Top 21-50)']);
+        
+        // Add remaining accounts (limit to next 30 for Tiered section)
+        const tieredAccounts = accountSheets.slice(20, 50);
+        tieredAccounts.forEach(sheet => {
+          overviewData.push([
+            sheet.properties.title,
+            currentDate,
+            'PG', // Default status
+            '',    // Empty SFDC Link
+            '',    // Empty Owner
+            0,     // Default Annual Value
+            'Review account plan' // Default Next Action
+          ]);
+        });
+      }
+      
+      // Update the Overview sheet with the refreshed data
+      await updateSheetData(spreadsheetId, 'Overview', overviewData);
+  
+      // Apply formatting to ensure the overview looks consistent
+      try {
+        await applyEnhancedOverviewFormatting(spreadsheetId);
+        console.log("Applied enhanced formatting to refreshed overview sheet");
+      } catch (formattingError) {
+        console.error("Error applying enhanced formatting to overview:", formattingError);
+        
+        // Try simplified formatting as fallback
+        try {
+          await applySimplifiedOverviewFormatting(spreadsheetId);
+          console.log("Applied simplified formatting to overview as fallback");
+        } catch (fallbackError) {
+          console.error("Even simplified formatting failed for overview:", fallbackError);
+        }
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("Error refreshing overview content:", error);
+      throw error;
+    }
+  }
+  
+
+/**
+ * Remove an account from the overview sheet using Sheet GID as primary identifier
+ * @param {string} spreadsheetId - ID of the master spreadsheet
+ * @param {string} accountName - Name of the account to remove
+ * @param {string|number} sheetGid - Sheet GID (unique identifier)
+ * @returns {Promise<boolean>} Success status
+ */
+ async function removeFromOverviewSheet(spreadsheetId, accountName, sheetGid) {
+  try {
+    console.log(`Removing account "${accountName}" (GID: ${sheetGid}) from overview sheet`);
+    
+    if (!authToken) {
+      authToken = await getAuthToken();
+    }
+    
+    // First check if the sheet exists with this GID
+    const sheetInfo = await getSheetDetails(spreadsheetId);
+    let targetSheetExists = false;
+    let targetSheetTitle = accountName; // Default to provided name
+    
+    if (sheetInfo && sheetInfo.sheets) {
+      for (const sheet of sheetInfo.sheets) {
+        if (sheet.properties && sheet.properties.sheetId === parseInt(sheetGid)) {
+          targetSheetExists = true;
+          targetSheetTitle = sheet.properties.title;
+          break;
+        }
+      }
+    }
+    
+    // Get the overview sheet data
+    const response = await fetchWithRetry(
+      `${SHEET_API_BASE}/${spreadsheetId}/values/Overview?valueRenderOption=FORMATTED_VALUE`, 
+      { 
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      }
+    );
+    
+    if (!response || !response.values) {
+      console.warn(`No values found in overview sheet for ${spreadsheetId}`);
+      return false;
+    }
+    
+    const values = response.values;
+    
+    // Find the overview sheet ID
+    let overviewSheetId = null;
+    if (sheetInfo.sheets) {
+      for (const sheet of sheetInfo.sheets) {
+        if (sheet.properties && sheet.properties.title === 'Overview') {
+          overviewSheetId = sheet.properties.sheetId;
+          break;
+        }
+      }
+    }
+    
+    if (!overviewSheetId) {
+      console.warn("Could not find Overview sheet ID");
+      return false;
+    }
+    
+    // Find the row with the account name (starting from row 19, after Strategic header)
+    let accountRowIndex = -1;
+    for (let i = 18; i < values.length; i++) {
+      if (values[i].length > 0 && values[i][0] === targetSheetTitle) {
+        accountRowIndex = i;
+        break;
+      }
+    }
+    
+    if (accountRowIndex === -1) {
+      console.warn(`Account "${targetSheetTitle}" not found in overview sheet`);
+      return false;
+    }
+    
+    // Use batchUpdate to delete the specific row
+    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: overviewSheetId,
+                dimension: "ROWS",
+                startIndex: accountRowIndex,
+                endIndex: accountRowIndex + 1
+              }
+            }
+          }
+        ]
+      })
+    });
+    
+    console.log(`Successfully removed account "${targetSheetTitle}" from overview sheet`);
+    return true;
+  } catch (error) {
+    console.error(`Error removing account "${accountName}" from overview sheet:`, error);
+    return false;
+  }
+}
+
+
+
+
+// =============================================================================
+// SECTION 12: SHEET CREATION AND DELETION
+// =============================================================================
+
+/**
+ * Create an account plan sheet with enhanced validation
  * @param {string} accountName - Name of the account
- * @param {Object} currentTab - Information about the current tab
- * @returns {Promise<Object>} Response with sheet details
+ * @param {Object} currentTab - Information about current tab
+ * @returns {Promise<Object>} Sheet data
  */
  async function createAccountPlanSheet(accountName, currentTab) {
   try {
+    // Validate required parameters
     if (!accountName) {
       throw new Error("Account name is required");
+    }
+    
+    // Validate account name format
+    if (typeof accountName !== 'string' || accountName.trim().length === 0) {
+      throw new Error("Account name must be a non-empty string");
+    }
+    
+    // Validate account name length
+    if (accountName.length > 100) {
+      throw new Error("Account name must be 100 characters or less");
+    }
+    
+    // Validate account name doesn't contain invalid characters
+    const invalidChars = /[\\/?*[\]]/g;
+    if (invalidChars.test(accountName)) {
+      throw new Error("Account name contains invalid characters (\\, /, ?, *, [, or ])");
+    }
+    
+    // Additional validation for currentTab if provided
+    if (currentTab && typeof currentTab !== 'object') {
+      throw new Error("If provided, currentTab must be an object");
     }
     
     // Get or create the master spreadsheet
     const masterSheet = await getMasterSpreadsheet();
     
-    // Sanitize the account name for use as a sheet title (max 100 chars, no special chars)
-    const safeAccountName = accountName.replace(/[\\/?*[\]]/g, '').substring(0, 100);
+    // Sanitize the account name for use as a sheet title
+    const safeAccountName = accountName.replace(invalidChars, '').substring(0, 100);
     
     // Check if a sheet with this name already exists
     const sheetInfo = await getSheetDetails(masterSheet.spreadsheetId);
@@ -2064,382 +4099,53 @@ async function updateSheetFormulas(spreadsheetId, sheetName) {
       isInlineNavigation: isInlineNavigation
     };
   } catch (error) {
+    // Enhance error message with context
+    const contextError = new Error(`Failed to create account plan: ${error.message}`);
+    contextError.originalError = error;
+    
     console.error("Error creating account plan sheet:", error);
-    throw error;
+    throw contextError;
   }
 }
 
-/**
- * Populate an account plan with an enhanced template
- * 
- * This function takes a new account plan and populates it with the template data,
- * then applies all necessary formatting and conditional formatting.
- * 
- * @param {string} spreadsheetId - ID of the spreadsheet
- * @param {Object} accountData - Account data with name
- * @returns {Promise<boolean>} Success status
- */
- async function populateEnhancedAccountPlanTemplate(spreadsheetId, accountData) {
-  try {
-    console.log(`Starting template population for: ${accountData.accountName}`);
-    
-    if (!spreadsheetId || !accountData || !accountData.accountName) {
-      throw new Error("Spreadsheet ID and account name are required");
-    }
-    
-    if (!authToken) {
-      authToken = await getAuthToken();
-    }
-    
-    // Create enhanced template data for the sheet
-    const templateData = createEnhancedAccountPlanTemplateData(accountData.accountName);
-    
-    // Update the sheet with the enhanced template data
-    await updateSheetData(spreadsheetId, accountData.accountName, templateData);
-    console.log("Template data applied successfully");
-    
-    // Apply enhanced formatting to match your template
-    const formattingSuccess = await applyEnhancedAccountPlanFormatting(spreadsheetId, accountData.accountName);
-    console.log(`Formatting applied with result: ${formattingSuccess}`);
-    
-    // Apply any additional formulas or conditional formatting
-    await addFormulasAndConditionalFormatting(spreadsheetId, accountData.accountName);
-    
-    // Refresh the overview sheet to include this new sheet
-    const overviewSuccess = await refreshOverviewContent(spreadsheetId);
-    console.log(`Overview refreshed with result: ${overviewSuccess}`);
-    
-    return true;
-  } catch (error) {
-    console.error("Error populating enhanced account plan template:", error);
-    throw error;
-  }
-}
-
-/**
- * Update the existing populateAccountPlanTemplate function to use the enhanced version
- * This ensures backward compatibility with the extension
- */
-async function populateAccountPlanTemplate(spreadsheetId, accountData) {
-  return populateEnhancedAccountPlanTemplate(spreadsheetId, accountData);
-}
-/**
- * Add formulas and conditional formatting to the account plan sheet
- * 
- * This function adds conditional formatting for status fields and role fields,
- * providing visual cues for different values to improve data interpretation.
- * 
- * @param {string} spreadsheetId - ID of the spreadsheet
- * @param {string} sheetName - Name of the sheet
- * @returns {Promise<boolean>} Success status
- */
- async function addFormulasAndConditionalFormatting(spreadsheetId, sheetName) {
-  try {
-    if (!authToken) {
-      authToken = await getAuthToken();
-    }
-    
-    // Get the sheet ID by name
-    const sheetInfo = await getSheetDetails(spreadsheetId);
-    
-    // Find the sheet ID
-    let sheetId = null;
-    if (sheetInfo.sheets) {
-      for (const sheet of sheetInfo.sheets) {
-        if (sheet.properties && sheet.properties.title === sheetName) {
-          sheetId = sheet.properties.sheetId;
-          break;
-        }
-      }
-    }
-    
-    if (!sheetId) {
-      console.warn(`Sheet "${sheetName}" not found`);
-      return false;
-    }
-    
-    // Add conditional formatting for priority and status cells
-    await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        requests: [
-          // Conditional formatting for Account Status
-          {
-            addConditionalFormatRule: {
-              rule: {
-                ranges: [
-                  {
-                    sheetId: sheetId,
-                    startRowIndex: 11,
-                    endRowIndex: 12,
-                    startColumnIndex: 1,
-                    endColumnIndex: 2
-                  }
-                ],
-                booleanRule: {
-                  condition: {
-                    type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Active' }]
-                  },
-                  format: {
-                    backgroundColor: {
-                      red: 0.85,
-                      green: 0.95,
-                      blue: 0.85
-                    }
-                  }
-                }
-              },
-              index: 0
-            }
-          },
-          {
-            addConditionalFormatRule: {
-              rule: {
-                ranges: [
-                  {
-                    sheetId: sheetId,
-                    startRowIndex: 11,
-                    endRowIndex: 12,
-                    startColumnIndex: 1,
-                    endColumnIndex: 2
-                  }
-                ],
-                booleanRule: {
-                  condition: {
-                    type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'On Hold' }]
-                  },
-                  format: {
-                    backgroundColor: {
-                      red: 1.0,
-                      green: 0.95,
-                      blue: 0.8
-                    }
-                  }
-                }
-              },
-              index: 1
-            }
-          },
-          {
-            addConditionalFormatRule: {
-              rule: {
-                ranges: [
-                  {
-                    sheetId: sheetId,
-                    startRowIndex: 11,
-                    endRowIndex: 12,
-                    startColumnIndex: 1,
-                    endColumnIndex: 2
-                  }
-                ],
-                booleanRule: {
-                  condition: {
-                    type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Churned' }]
-                  },
-                  format: {
-                    backgroundColor: {
-                      red: 0.95,
-                      green: 0.8,
-                      blue: 0.8
-                    }
-                  }
-                }
-              },
-              index: 2
-            }
-          },
-          
-          // Add conditional formatting for Role column in Key Contacts
-          {
-            addConditionalFormatRule: {
-              rule: {
-                ranges: [
-                  {
-                    sheetId: sheetId,
-                    startRowIndex: 36,
-                    endRowIndex: 39,
-                    startColumnIndex: 4,
-                    endColumnIndex: 5
-                  }
-                ],
-                booleanRule: {
-                  condition: {
-                    type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Decision Maker' }]
-                  },
-                  format: {
-                    backgroundColor: {
-                      red: 0.85,
-                      green: 0.85,
-                      blue: 0.95
-                    },
-                    textFormat: {
-                      bold: true
-                    }
-                  }
-                }
-              },
-              index: 3
-            }
-          },
-          {
-            addConditionalFormatRule: {
-              rule: {
-                ranges: [
-                  {
-                    sheetId: sheetId,
-                    startRowIndex: 36,
-                    endRowIndex: 39,
-                    startColumnIndex: 4,
-                    endColumnIndex: 5
-                  }
-                ],
-                booleanRule: {
-                  condition: {
-                    type: 'TEXT_EQ',
-                    values: [{ userEnteredValue: 'Champion' }]
-                  },
-                  format: {
-                    backgroundColor: {
-                      red: 0.85,
-                      green: 0.95,
-                      blue: 0.85
-                    }
-                  }
-                }
-              },
-              index: 4
-            }
-          }
-        ]
-      })
-    });
-    
-    return true;
-  } catch (error) {
-    console.error("Error adding formulas and conditional formatting:", error);
-    return false; // Treat as non-critical - continue even if this fails
-  }
-}
-/**
- * Update the existing populateAccountPlanTemplate function to use the enhanced version
- * This ensures backward compatibility with the extension
- */
- async function populateAccountPlanTemplate(spreadsheetId, accountData) {
-  return populateEnhancedAccountPlanTemplate(spreadsheetId, accountData);
-}
-/**
- * Function to refresh the overview sheet content with improved design
- * 
- * This function updates the overview sheet content with all account data
- * and refreshes formatting. It's called when new accounts are created or
- * after account deletion to keep the overview current.
- * 
- * @param {string} spreadsheetId - ID of the master spreadsheet
- * @returns {Promise<boolean>} Success status
- */
- async function refreshOverviewContent(spreadsheetId) {
-  try {
-    // Get all sheets in the spreadsheet
-    const sheetInfo = await getSheetDetails(spreadsheetId);
-    
-    if (!sheetInfo.sheets) {
-      throw new Error("Could not retrieve sheet information");
-    }
-    
-    // Filter out the Overview sheet and collect account sheets
-    const accountSheets = sheetInfo.sheets.filter(sheet => 
-      sheet.properties && sheet.properties.title !== 'Overview'
-    );
-    
-    // Format the current date
-    const currentDate = new Date().toLocaleDateString('en-US', {
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric'
-    });
-    
-    // Prepare data for the overview sheet
-    const year = new Date().getFullYear();
-    
-    // Create the base of the overview data - preserve the header formatting
-    const overviewData = [
-      [`Account Plan Dashboard ${year}`], // A1: Title
-      [''], // A2: Empty row
-      ['Created: ' + currentDate], // A3: Creation date
-      ['Last Updated: ' + currentDate], // A4: Last updated
-      [''], // A5: Empty row
-      ['Welcome to your account management dashboard'], // A6: Welcome message
-      ['Track, manage, and optimize your strategic account relationships in one place'], // A7: Instruction
-      [''], // A8: Empty row
-      ['DASHBOARD METRICS'], // A9: Metrics header
-      [''], // A10: Empty row
-      ['Total Accounts', 'High Priority', 'Medium Priority', 'Low Priority', 'Total Value'],
-      ['=COUNTA(A18:A100)', '=COUNTIF(D18:D100,"High")', '=COUNTIF(D18:D100,"Medium")', '=COUNTIF(D18:D100,"Low")', '=SUM(F18:F100)'],
-      [''], // A13: Empty row
-      [''], // A14: Empty row
-      ['ACCOUNT OVERVIEW:'], // A15: Accounts header
-      [''], // A16: Empty row
-      // Table headers in row 17
-      ['Account Name', 'Last Activity', 'Status', 'Priority', 'Owner', 'Annual Value', 'Next Action']
-    ];
-    
-    // Add all account sheets to the overview with default placeholder values
-    accountSheets.forEach(sheet => {
-      overviewData.push([
-        sheet.properties.title,
-        currentDate,
-        'Active',
-        'Medium',
-        '',
-        0,
-        'Review account plan'
-      ]);
-    });
-    
-    // Update the Overview sheet with the refreshed data
-    await updateSheetData(spreadsheetId, 'Overview', overviewData);
-    
-    // Apply formatting to ensure the overview looks consistent
-    await applyEnhancedOverviewFormatting(spreadsheetId);
-    
-    return true;
-  } catch (error) {
-    console.error("Error refreshing overview content:", error);
-    throw error;
-  }
-}
 /**
  * Delete an account plan sheet
  * @param {string} spreadsheetId - ID of the spreadsheet
  * @param {string} accountName - Name of the account to delete
- * @param {string} sheetGid - Sheet GID
- * @returns {Promise<Object>} Success status
+ * @param {string|number} sheetGid - Sheet GID
+ * @returns {Promise<Object>} Result object
  */
  async function deleteAccountPlanSheet(spreadsheetId, accountName, sheetGid) {
   try {
-    if (!spreadsheetId || !accountName) {
-      throw new Error("Spreadsheet ID and account name are required");
+    if (!spreadsheetId || (!accountName && !sheetGid)) {
+      throw new Error("Spreadsheet ID and either account name or sheet GID are required");
     }
     
-    // Make sure we have a valid auth token
-    if (!authToken) {
-      authToken = await getAuthToken();
-    }
-    
-    // Get the sheet ID by name
+    // Get the sheet ID by name or GID
     const sheetInfo = await getSheetDetails(spreadsheetId);
     
-    // Find the sheet ID if not provided
-    let sheetId = sheetGid;
-    if (!sheetId && sheetInfo.sheets) {
+    // Find the sheet by GID first (most reliable)
+    let sheetId = sheetGid ? parseInt(sheetGid) : null;
+    let actualSheetName = accountName;
+    
+    if (sheetId !== null && sheetInfo.sheets) {
+      let sheetFound = false;
+      for (const sheet of sheetInfo.sheets) {
+        if (sheet.properties && sheet.properties.sheetId === sheetId) {
+          sheetFound = true;
+          actualSheetName = sheet.properties.title;
+          break;
+        }
+      }
+      
+      if (!sheetFound) {
+        // Fall back to name-based search if GID not found
+        sheetId = null;
+      }
+    }
+    
+    // If GID wasn't provided or not found, find by name
+    if (sheetId === null && sheetInfo.sheets) {
       for (const sheet of sheetInfo.sheets) {
         if (sheet.properties && sheet.properties.title === accountName) {
           sheetId = sheet.properties.sheetId;
@@ -2452,7 +4158,7 @@ async function populateAccountPlanTemplate(spreadsheetId, accountData) {
       throw new Error(`Sheet "${accountName}" not found`);
     }
     
-    console.log(`Deleting sheet with ID ${sheetId} for account "${accountName}"`);
+    console.log(`Deleting sheet with ID ${sheetId} for account "${actualSheetName}"`);
     
     // Delete the sheet
     await fetchWithRetry(`${SHEET_API_BASE}/${spreadsheetId}:batchUpdate`, {
@@ -2465,21 +4171,20 @@ async function populateAccountPlanTemplate(spreadsheetId, accountData) {
         requests: [
           {
             deleteSheet: {
-              sheetId: parseInt(sheetId)
+              sheetId: sheetId
             }
           }
         ]
       })
     });
     
-    console.log(`Sheet for "${accountName}" deleted successfully`);
+    console.log(`Sheet for "${actualSheetName}" deleted successfully`);
     
-    // Refresh the overview sheet to remove this sheet
+    // Remove the account from the overview sheet
     let overviewUpdated = false;
     try {
-      await refreshOverviewContent(spreadsheetId);
-      overviewUpdated = true;
-      console.log("Overview sheet refreshed successfully");
+      overviewUpdated = await removeFromOverviewSheet(spreadsheetId, actualSheetName, sheetId);
+      console.log(`Account "${actualSheetName}" removal from overview: ${overviewUpdated ? 'successful' : 'failed'}`);
     } catch (error) {
       console.warn("Error updating overview after deletion:", error);
       // Continue anyway, the sheet deletion was successful
